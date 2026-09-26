@@ -1,0 +1,29 @@
+# The version information built into NeonAssistant.exe (neon.spec: EXE(version=...)). Windows shows
+# FileDescription as the app's name on the taskbar, in Task Manager and in "Apps" lists; without it, it
+# falls back to the file name.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'Neon Assistant'),
+        StringStruct('FileDescription', 'Neon Assistant'),
+        StringStruct('FileVersion', '1.0.0.0'),
+        StringStruct('InternalName', 'NeonAssistant'),
+        StringStruct('OriginalFilename', 'NeonAssistant.exe'),
+        StringStruct('ProductName', 'Neon Assistant'),
+        StringStruct('ProductVersion', '1.0.0.0')
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

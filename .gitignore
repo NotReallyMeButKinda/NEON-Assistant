@@ -1,0 +1,43 @@
+# Personal data and secrets: never commit these
+assistant_config.json
+assistant_config.json.*
+ytm_token.json
+notify_restore.json
+app.cache
+needle_tool_index.json
+neon.log*
+whisper/
+
+# Downloaded voices (large; fetched on first use)
+voices/*.onnx
+voices/*.onnx.json
+
+# Python / tooling
+__pycache__/
+*.pyc
+.idea/
+.venv/
+build/
+dist/
+*.spec.bak
+
+# Visual test output and downloaded wake-word models / saved timers (see tests/render_utils.py)
+tests/_renders/
+wakeword/
+timers.json
+
+# Things the assistant was told to remember, the board, cached lookups, and the user's own plugins
+# (the example plugin ships with the program)
+memories.json
+board.json
+lookup_cache.json
+*.corrupt-*
+plugins/*
+!plugins/example.py
+
+# Logs and self-test output
+console.log
+selftest.txt
+
+# Claude Code: personal settings for this folder
+.claude/settings.local.json

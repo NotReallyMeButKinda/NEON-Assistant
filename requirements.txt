@@ -1,0 +1,28 @@
+# NEON Assistant -- Python packages. Windows 10 / 11, Python 3.10 or newer.
+#   pip install -r requirements.txt
+# See INSTALL.md for everything that isn't a Python package (Ollama, Everything, Bitwarden, the browser
+# extension...) and for what each optional line below adds.
+
+# --- the program ---------------------------------------------------------------------------------
+PySide6>=6.7                  # the windows, the status bar, Settings
+numpy>=1.26                   # audio
+sounddevice>=0.4.6            # microphone and speakers
+pywin32>=306                  # Windows COM for the built-in Windows voices
+tzdata                        # time zones ("what time is it in Tokyo")
+
+# --- understanding commands without the local AI ----------------------------------------------------
+cactus-needle>=3.0            # the small tool-picker; then run once:  needle fetch --generation 2
+
+# --- hearing you ---------------------------------------------------------------------------------
+faster-whisper>=1.2           # offline speech recognition (the default) and the voice-activity model
+SpeechRecognition>=3.10       # Google speech recognition (optional engine, and the online fallback)
+onnxruntime>=1.17             # the wake-word detector and voice-activity detection
+
+# --- speaking ------------------------------------------------------------------------------------
+piper-tts>=1.3                # the neural voices (downloaded when first used)
+pyttsx3>=2.90                 # Windows' own voices, the fallback
+
+# --- optional ------------------------------------------------------------------------------------
+# openwakeword                # openWakeWord's stock phrases ("hey jarvis", "alexa"); "hey nova" doesn't need it
+# uiautomation                # reading selected text in apps that block Ctrl+C
+# pyinstaller                 # building NeonAssistant.exe (python build_exe.py)

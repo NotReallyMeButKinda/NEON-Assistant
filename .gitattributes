@@ -1,0 +1,12 @@
+# The same files check out on Windows and Linux: text uses LF everywhere (Python, Qt and git handle it on
+# Windows too), except the PowerShell helpers, which Windows PowerShell prefers with CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.wav binary
+*.npz binary
+*.onnx binary
+*.xpi binary
+*.zip binary

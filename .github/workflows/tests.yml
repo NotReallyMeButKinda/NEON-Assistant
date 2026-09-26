@@ -1,0 +1,26 @@
+# Runs the unit tests on Windows for every push and pull request. No microphone, Ollama or network
+# services are needed: live tests are skipped unless NEON_LIVE=1, and screenshot comparisons are skipped
+# (the baselines are drawn with one machine's fonts) while the clipped-text audit still runs.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      NEON_SKIP_SCREENSHOTS: "1"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run the tests
+        run: python -m unittest discover -s tests -t . -v

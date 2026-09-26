@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NEON Assistant Bridge</title>
+  <style>
+    :root { color-scheme: light dark; --accent: #19d3e6; --muted: #8a93a6; }
+    body { font: 13px/1.45 system-ui, sans-serif; margin: 0; padding: 14px 16px; min-width: 300px; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    label { display: block; font-weight: 600; margin: 10px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px;
+            border: 1px solid #6668; background: transparent; color: inherit; font: inherit; }
+    .row { display: flex; gap: 8px; margin-top: 14px; }
+    button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent); cursor: pointer;
+             background: var(--accent); color: #041016; font-weight: 600; }
+    button.plain { background: transparent; color: inherit; border-color: #6668; }
+    #status { margin-top: 12px; min-height: 1.4em; }
+    .ok { color: #3ecf8e; } .bad { color: #e5604d; }
+  </style>
+</head>
+<body>
+  <h1>NEON Assistant Bridge</h1>
+  <p>Paste the token from NEON's Settings &gt; Browser. The extension only ever talks to NEON on this PC.</p>
+  <label for="token">Token</label>
+  <input id="token" type="password" autocomplete="off" spellcheck="false">
+  <label for="port">Port</label>
+  <input id="port" type="number" min="1024" max="65535">
+  <div class="row">
+    <button id="save">Save and connect</button>
+    <button id="test" class="plain">Test</button>
+  </div>
+  <div id="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>
