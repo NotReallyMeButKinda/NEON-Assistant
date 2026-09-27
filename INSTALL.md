@@ -2,7 +2,7 @@
 
 This guide installs the program, then each feature that needs something extra. Only the first section is
 required: every other feature is optional, and NEON works without it (it tells you what's missing when
-you ask for it). For what NEON does and how to use it, see [README.md](README.md).
+you ask for it). For what NEON does and how to use it, see [GUIDE.md](GUIDE.md).
 
 | Feature | Needs | Section |
 | --- | --- | --- |
@@ -203,7 +203,7 @@ supported by Whisper; it runs on the processor instead, which is fine for the Ba
 **Google instead:** *Recognize speech → With Google* needs no download but sends each command's audio to
 Google.
 
-**Better recognition:** see *Listening* in the [README](README.md#listening). In short: choose your
+**Better recognition:** see *Listening* in the [guide](GUIDE.md#listening). In short: choose your
 microphone itself (not a stream or chat mix), and keep *Tell my voice apart from background sound* on.
 
 ---
@@ -410,7 +410,7 @@ python build_exe.py --out C:\nb
 ```
 
 The program is in `C:\nb\dist\NeonAssistant\`; run `NeonAssistant.exe` from there, or copy that folder
-anywhere; `README.md`, `INSTALL.md` and the browser extension (`neon-bridge.xpi` for Firefox / Zen, the
+anywhere; `README.md`, `GUIDE.md`, `INSTALL.md` and the browser extension (`neon-bridge.xpi` for Firefox / Zen, the
 `neon-bridge-chrome` folder and `.zip` for Chrome / Edge / Brave) are copied next to the `.exe`. No voices or AI models are included: pick them in the app and they download the first time.
 To check a build, run `NeonAssistant.exe --selftest` (with NEON closed): it opens every window off-screen,
 loads the speech engines, quits, and writes the results to `selftest.txt` in `%APPDATA%\NeonAssistant`.
