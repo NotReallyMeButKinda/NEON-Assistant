@@ -344,3 +344,23 @@ why it's worth doing and roughly how big it is (S = an hour or two, M = an after
 - [ ] **Smaller build (S-M).** The exe folder is ~375 MB; PySide6 modules the app never imports (WebEngine, 3D,
   Multimedia...) and `av.libs` (~64 MB, pulled in by faster-whisper) are the biggest wins to try excluding.
 - [ ] **Installer (M).** An Inno Setup script would give a Start-menu entry and an uninstaller instead of a loose folder.
+
+### Linux port (September 26)
+- [ ] **Try it on a real Arch session (S).** Everything is tested against fakes (and a Linux CI job that hasn't run
+  yet); the first real Hyprland and Plasma runs will show what the fakes got wrong. Worth checking first: the
+  Lua-config commands (`hl.window_rule`, `hl.monitor` reserved area, `set_prop` "unset"), and Plasma's
+  shortcut-portal dialog.
+- [ ] **KDE: reserve the bar's strip (M).** Mostly covered by the panel widget now. For NEON's own bar, KWin
+  rules can't reserve space; a layer-shell surface (LayerShellQt, needs a small compiled helper) would.
+- [ ] **KDE: the "close this?" outline (M).** A KWin script (loaded over D-Bus) could draw it, or recolour the
+  window's frame like Hyprland does.
+- [ ] **KDE: fullscreen detection for the shade (S).** kdotool doesn't report fullscreen; a KWin script or
+  comparing the active window's geometry to the screen would.
+- [ ] **A PKGBUILD (S-M).** Install into /opt with its own venv plus a `neon-assistant` launcher, so keybinds and
+  autostart don't need the source path.
+- [ ] **Hotkeys on KDE follow Settings (S).** Plasma keeps the first confirmed keys; NEON could open the
+  portal's ConfigureShortcuts (portal v2) when you change one, instead of the note telling you to.
+- [ ] **Panel widget extras (S).** It shows state and captions only; the bar's clock, weather, CPU and music
+  widgets could join the feed, and its pop-up could show notification cards with Summarize / Open.
+- [ ] **Panel widget on a real Plasma (S).** Tested in plain Qt with stand-ins for Plasma's modules; check the
+  look in a light and a dark theme, a vertical panel, and the pop-up's size on a real desktop.

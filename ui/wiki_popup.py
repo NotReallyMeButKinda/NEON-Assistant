@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QVB
 import assistant as backend
 import websearch
 
+from . import wayland_place
 from .motion import animations_enabled
 from .status_bar import list_monitors
 from .theme import COLORS
@@ -96,6 +97,7 @@ class WikiPopup(QWidget):
         controller.wiki_article.connect(self.show_article)
         theme_signals.changed.connect(self._restyle)
         self._restyle()
+        wayland_place.prepare(self, "NEON Wikipedia card")
 
     # ---- content ---------------------------------------------------------------------------
     def show_article(self, article: dict) -> None:
@@ -116,6 +118,7 @@ class WikiPopup(QWidget):
             url = self._image_url
             threading.Thread(target=lambda: self._download(url), name="Nova-WikiImage", daemon=True).start()
         self._place()
+        wayland_place.settle(self)
         if not self.isVisible():
             self.setWindowOpacity(0.0 if animations_enabled() else 1.0)
             self.show()

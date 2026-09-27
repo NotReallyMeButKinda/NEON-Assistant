@@ -54,10 +54,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-if sys.platform != "win32":
-    sys.exit("NEON ASSISTANT targets Windows (Start Menu app discovery, SAPI5 TTS). "
-              "Run it on a Windows machine.")
-
 try:
     import sounddevice as sd
     import pyttsx3
@@ -69,7 +65,10 @@ try:
 except ImportError as exc:
     sys.exit(f"Missing dependency ({exc}). Run: pip install -r requirements.txt")
 
-import winreg  # noqa: E402  (Windows-only, guarded above)
+import osinfo  # noqa: E402
+
+if osinfo.IS_WINDOWS:
+    import winreg  # noqa: E402
 
 import app_paths  # noqa: E402
 import clipboard  # noqa: E402
@@ -220,6 +219,8 @@ DEFAULT_CONFIG = {
     "confirm_window_close": True,          # "close discord" asks first, and outlines the window while it asks
     "browser_enabled": True,               # talk to the NEON extension in Zen / Firefox (browser_bridge.py)
     "browser_port": 47811,                 # the local port the extension connects to (127.0.0.1 only)
+    "panel_widget_enabled": True,          # Linux: feed the KDE Plasma panel widget (panel_feed.py, plasmoid/)
+    "panel_widget_port": 47812,            # ...on this local port (127.0.0.1 only)
     "lookup_cache": True,                  # reuse recent lookups: fact answers (12 h), search results (24 h),
                                            # places (30 days); the newest 50 of each (lookup_cache.py)
     "ha_enabled": False,                   # smart home through Home Assistant's Assist (homeassistant.py)
@@ -1187,7 +1188,33 @@ def _start_menu_dirs() -> list[Path]:
     return [d for d in dirs if d.exists()]
 
 
+def _startfile(target: str) -> None:
+    """Open an app shortcut, a file or a link the way the system would (Windows: os.startfile; Linux: the
+    app's .desktop file, or xdg-open). Raises OSError when nothing could open it."""
+    if osinfo.IS_WINDOWS:
+        os.startfile(target)  # noqa: S606 -- the user's own shortcut, file or default handler
+        return
+    from linuxdesk import apps as linux_apps
+    if not linux_apps.open_target(str(target)):
+        raise OSError(f"nothing could open {target}")
+
+
+def _open_with(program: str, argument: str) -> None:
+    """Start `program` (an .exe, or on Linux an app's .desktop file) with one argument (a link to open)."""
+    import subprocess
+    if not osinfo.IS_WINDOWS and str(program).endswith(".desktop"):
+        from linuxdesk import apps as linux_apps
+        if not linux_apps.launch(program, [argument]):
+            raise OSError(f"couldn't start {program}")
+        return
+    subprocess.Popen([program, argument])
+
+
 def discover_shortcuts() -> dict[str, str]:
+    if not osinfo.IS_WINDOWS:                       # Linux: the apps' .desktop files
+        from linuxdesk import apps as linux_apps
+        return {name: info["path"] for name, info in linux_apps.discover().items()
+                if not any(s in name.lower() for s in SKIP_NAME_SUBSTRINGS)}
     apps: dict[str, str] = {}
     for base in _start_menu_dirs():
         for lnk in base.rglob("*.lnk"):
@@ -1234,6 +1261,8 @@ def _read_value(key, name: str) -> str | None:
 
 
 def discover_publishers() -> dict[str, str]:
+    if not osinfo.IS_WINDOWS:
+        return {}                                   # Linux: descriptions come from the .desktop files instead
     hives = (
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -1364,9 +1393,16 @@ def build_app_catalogue(progress_cb=None, background: bool = True) -> None:
         if progress_cb:
             progress_cb(msg)
 
-    report("Scanning Start Menu for apps...")
+    report("Scanning Start Menu for apps..." if osinfo.IS_WINDOWS else "Scanning installed apps...")
     shortcuts = discover_shortcuts()
     cache = load_app_cache()
+    if not osinfo.IS_WINDOWS:                       # every .desktop file says what its app is: no lookups needed
+        from linuxdesk import apps as linux_apps
+        described = linux_apps.discover()
+        for name in shortcuts:
+            if name not in cache or cache[name].get("launch_path") != shortcuts[name]:
+                cache[name] = {"launch_path": shortcuts[name], "publisher": None,
+                               "description": described.get(name, {}).get("description", "")}
     for name in set(shortcuts) - set(cache):
         if shortcuts[name].startswith("shell:"):  # Store apps: no Wikipedia lookups for these
             cache[name] = {"launch_path": shortcuts[name], "publisher": None, "description": ""}
@@ -1506,6 +1542,9 @@ def resolve_default_app(query: str) -> dict | None:
     if kind is None:
         return None
     assoc, is_protocol = _GENERIC_APPS[kind]
+    if not osinfo.IS_WINDOWS:                       # Linux: xdg-mime; 'exe' is the app's .desktop file
+        from linuxdesk.apps import default_for
+        return default_for(kind, assoc, is_protocol)
     try:
         exe = _assoc_query(_ASSOCSTR_EXECUTABLE, assoc, is_protocol)
         name = _assoc_query(_ASSOCSTR_FRIENDLYAPPNAME, assoc, is_protocol)
@@ -1523,7 +1562,7 @@ def _launch_default(default: dict) -> str | None:
     exe = default["exe"]
     try:
         if exe and Path(exe).exists():
-            os.startfile(exe)  # noqa: S606 -- the user's own registered default handler
+            _startfile(exe)                             # the user's own registered default handler
             return default["name"]
     except OSError:
         pass
@@ -1531,7 +1570,7 @@ def _launch_default(default: dict) -> str | None:
     shortcut = fuzzy_resolve_app(default["name"], skip_avoided=True)
     if shortcut is not None:
         try:
-            os.startfile(_APP_CATALOGUE[shortcut]["launch_path"])  # noqa: S606
+            _startfile(_APP_CATALOGUE[shortcut]["launch_path"])
             return shortcut
         except OSError:
             return None
@@ -1547,7 +1586,7 @@ def launch_app(app_name: str) -> str:
                 return (f"Your default {default['kind']} is {default['name']}, "
                         "which is on your avoid list, so I won't open it.")
             try:
-                os.startfile(_APP_CATALOGUE[alt]["launch_path"])  # noqa: S606
+                _startfile(_APP_CATALOGUE[alt]["launch_path"])
                 return (f"Your default {default['kind']} is {default['name']}, which is on your "
                         f"avoid list, so I opened {alt} instead.")
             except OSError as exc:
@@ -1567,7 +1606,7 @@ def launch_app(app_name: str) -> str:
     if resolved is None:
         return f"I couldn't find an app matching '{app_name}'."
     try:
-        os.startfile(_APP_CATALOGUE[resolved]["launch_path"])  # noqa: S606 -- local shortcut
+        _startfile(_APP_CATALOGUE[resolved]["launch_path"])       # a local shortcut / .desktop file
         return f"Launching {resolved}."
     except OSError as exc:
         return f"Found {resolved}, but couldn't launch it: {exc}"
@@ -1586,6 +1625,8 @@ _BROWSERS = ("chrome", "firefox", "brave", "zen", "vivaldi", "opera", "librewolf
 
 def _shortcut_target(lnk: str) -> str | None:
     """The program a Start Menu shortcut points at (so it can be started with a URL argument)."""
+    if not osinfo.IS_WINDOWS:
+        return lnk if Path(lnk).is_file() else None    # Linux: the .desktop file launches with the link
     import subprocess
     try:
         out = subprocess.run(
@@ -1631,12 +1672,12 @@ def open_website(target: str) -> str:
                     f"and I couldn't find another browser to open {host} in.")
         name, exe = alt
         try:
-            subprocess.Popen([exe, url])
+            _open_with(exe, url)
         except OSError as exc:
             return f"I couldn't open {host} in {name}: {exc}"
         return f"Your default browser is {default['name']}, which is on your avoid list, so I opened {host} in {name}."
     try:
-        os.startfile(url)  # noqa: S606 -- hands the URL to the user's default browser
+        _startfile(url)                                 # hands the URL to the user's default browser
     except OSError as exc:
         return f"I couldn't open {host}: {exc}"
     return f"Opening {host}."
@@ -1825,7 +1866,53 @@ def handle_music_command(text: str) -> str | None:
         return None
     if not YTM.enabled:
         return None
+    if method == "search_and_play":
+        offer = _offer_to_open_pear(method, arg)       # closed: "Should I open it and play ...?"
+        if offer:
+            return offer
     return _YTM_UNREACHABLE if must_answer else None
+
+
+_PEAR_NAMES = ("pear desktop", "youtube music", "pear")
+PEAR_START_SECONDS = 45
+
+
+def _pear_app() -> str | None:
+    """Pear Desktop's entry in the app list (its Start menu shortcut is still called "YouTube Music")."""
+    for name in _APP_CATALOGUE:
+        if name.lower() in _PEAR_NAMES:
+            return name
+    return None
+
+
+def _offer_to_open_pear(method: str, arg) -> str | None:
+    app = _pear_app()
+    if app is None:
+        return None
+    what = f"play {arg}" if arg else "try that again"
+    return _ask_to_confirm("open_pear", (method, arg), f"{app} isn't open. Should I open it and {what}?")
+
+
+def _open_pear_and_retry(argument) -> str:
+    """The yes to "Should I open it and play ...?": start Pear Desktop, wait until its API answers, retry."""
+    method, arg = argument
+    app = _pear_app()
+    if app is None:
+        return "I can't find Pear Desktop to open it."
+    try:
+        _startfile(_APP_CATALOGUE[app]["launch_path"])
+    except OSError as exc:
+        return f"I couldn't open {app}: {exc}"
+    _status(f"Waiting for {app} to start...")
+    if not YTM.wait_until_ready(PEAR_START_SECONDS):
+        return f"I opened {app}, but it isn't answering yet. Is its API server turned on? Try again in a moment."
+    args = () if arg is None else (arg,)
+    reply = YTM.run(method, *args)
+    if reply is None:                                  # its window was still loading: once more
+        time.sleep(3)
+        reply = YTM.run(method, *args)
+    return reply or _YTM_UNREACHABLE
+
 
 
 @needle.tool
@@ -2552,6 +2639,7 @@ def handle_close_command(text: str) -> str | None:
 
 LOCAL_CONFIRMED["close_window"] = close_windows
 LOCAL_CONFIRMED["notif_card"] = _add_notification_card
+LOCAL_CONFIRMED["open_pear"] = _open_pear_and_retry      # "Pear Desktop isn't open. Should I open it and play...?"
 LOCAL_CONFIRMED["home_command"] = lambda request: _home_do(request)       # "Unlock the front door?" -> yes   # "want me to add that to your board?"
 
 
@@ -3418,6 +3506,9 @@ def _route_local(text: str, followup: str | None) -> str | None:
 # engines aren't safe to drive from multiple threads at once.
 # ---------------------------------------------------------------------------
 
+_SAPI_DRIVER = "sapi5" if osinfo.IS_WINDOWS else "espeak"      # pyttsx3's driver for the built-in voices
+
+
 class _SapiStream:
     """Streaming shim so SapiSpeaker offers the same feed()/finish() API as Piper:
     each completed sentence is queued for speech as it arrives."""
@@ -3526,7 +3617,7 @@ class SapiSpeaker:
         # A fresh engine per utterance: reusing one pyttsx3 SAPI engine across
         # runAndWait() calls (especially off the main thread) commonly goes
         # silent after the first phrase.
-        engine = pyttsx3.init("sapi5")
+        engine = pyttsx3.init(_SAPI_DRIVER)
         engine.setProperty("rate", int(cfg_num("sapi_rate") * persona.rate(current_persona())))
         engine.setProperty("volume", max(0.0, min(1.0, cfg_num("tts_volume"))))
         wanted = str(CONFIG.get("sapi_voice", "")).strip().lower()
@@ -3554,8 +3645,25 @@ class SapiSpeaker:
 
     def _speak_powershell(self, text: str) -> None:
         """Fallback: System.Speech via PowerShell, text passed through the
-        environment so no quoting/escaping is needed."""
+        environment so no quoting/escaping is needed. On Linux: espeak-ng (or speech-dispatcher's spd-say)."""
         import subprocess
+        if not osinfo.IS_WINDOWS:
+            program = next((p for p in ("espeak-ng", "espeak") if osinfo.which(p)), None)
+            args = [program, "--stdin"] if program else (["spd-say", "--wait", text] if osinfo.which("spd-say") else None)
+            if args is None:
+                return
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE if program else None, text=True)
+            with self._engine_lock:
+                self._proc = proc
+            try:
+                if program:
+                    proc.communicate(text)
+                else:
+                    proc.wait()
+            finally:
+                with self._engine_lock:
+                    self._proc = None
+            return
         script = ("Add-Type -AssemblyName System.Speech; "
                   "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
                   "$s.Speak($env:NEON_TTS_TEXT)")
@@ -3603,7 +3711,7 @@ class SapiSpeaker:
 
 def list_sapi_voices() -> list[str]:
     try:
-        engine = pyttsx3.init("sapi5")
+        engine = pyttsx3.init(_SAPI_DRIVER)
         names = [v.name for v in engine.getProperty("voices")]
         engine.stop()
         return names

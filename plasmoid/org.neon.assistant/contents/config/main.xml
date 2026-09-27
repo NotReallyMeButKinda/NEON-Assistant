@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="clickAction" type="String">
+      <label>What a click does: talk (start listening) or popup (open the widget's panel)</label>
+      <default>talk</default>
+    </entry>
+    <entry name="showCaption" type="Bool">
+      <label>Show what NEON hears and says next to the orb</label>
+      <default>true</default>
+    </entry>
+    <entry name="captionWidth" type="Int">
+      <label>Width of that text, in grid units</label>
+      <default>16</default>
+    </entry>
+    <entry name="captionSeconds" type="Int">
+      <label>How long a line stays after NEON goes quiet, in seconds</label>
+      <default>8</default>
+    </entry>
+    <entry name="useNeonColors" type="Bool">
+      <label>Colour the orb with NEON's theme instead of the Plasma theme</label>
+      <default>true</default>
+    </entry>
+    <entry name="port" type="Int">
+      <label>The port NEON's panel feed listens on (Settings, Status bar)</label>
+      <default>47812</default>
+    </entry>
+    <entry name="launchCommand" type="String">
+      <label>The command that starts NEON</label>
+      <default>@LAUNCH@</default>
+    </entry>
+  </group>
+</kcfg>

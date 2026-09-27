@@ -1,0 +1,5 @@
+module org.kde.plasma.components
+Label 3.0 Label.qml
+ToolButton 3.0 ToolButton.qml
+Button 3.0 Button.qml
+ScrollView 3.0 ScrollView.qml

@@ -13,7 +13,7 @@ CONFIG is mutated in place because the backend (speaker, listener, tools) reads 
 from __future__ import annotations
 
 import json
-import os
+import shlex
 import threading
 
 from PySide6.QtCore import Qt, QTime, QTimer, Signal
@@ -31,6 +31,7 @@ import clipboard
 import hotkeys
 import memory_store
 import neon_log
+import osinfo
 import persona
 import plugins
 import settings_schema
@@ -448,16 +449,20 @@ class SettingsDialog(QDialog):
         self._text("user_name", "Your name", "What should I call you?",
                    "I use it now and then, and greet you with it. You can also say \"call me\" and your name.")
         self._section("Startup")
-        autostart = QCheckBox("Start automatically when I sign in to Windows")
+        autostart = QCheckBox("Start automatically when I sign in to Windows" if osinfo.IS_WINDOWS
+                              else "Start automatically when I sign in")
         self._register("start_with_windows", autostart.isChecked,
                        lambda v: autostart.setChecked(startup.is_enabled()))  # the registry is the truth
         import shortcuts
-        for key, kind, text in (("start_menu_shortcut", "start_menu", "Put me in the Start menu"),
+        for key, kind, text in (("start_menu_shortcut", "start_menu", "Put me in the Start menu" if osinfo.IS_WINDOWS
+                                 else "Put me in the app menu"),
                                 ("desktop_shortcut", "desktop", "Put a shortcut to me on the desktop")):
             box = QCheckBox(text)
             self._register(key, box.isChecked, lambda v, b=box, k=kind: b.setChecked(shortcuts.exists(k)))
             p.check(box, keywords="shortcut start menu desktop icon launch")
-        p.check(autostart)
+        p.check(autostart, "" if osinfo.IS_WINDOWS or osinfo.desktop() != "hyprland" else
+                "Hyprland starts these only through uwsm (or dex). Otherwise add exec-once = "
+                + shlex.join(app_paths.launch_args(["--minimized"])) + " to hyprland.conf.")
         self._check("start_minimized", "Start hidden",
                     "Only the tray icon and the status bar show until you open the window.")
 
@@ -552,9 +557,14 @@ class SettingsDialog(QDialog):
             apply_theme(combo.currentData(), accent["value"], overrides)
         follow.toggled.connect(follow_changed)
 
-        self._check("custom_titlebar", "Use NEON's own title bar on its windows",
-                    "In the theme's colors. Off gives Windows' usual title bar. Snapping, resizing and "
-                    "double-click to maximize work either way.", keywords="title bar frame window chrome native")
+        titlebar = self._check("custom_titlebar", "Use NEON's own title bar on its windows",
+                               "In the theme's colors. Off gives Windows' usual title bar. Snapping, resizing and "
+                               "double-click to maximize work either way." if osinfo.IS_WINDOWS else
+                               "Windows only: on Linux the desktop draws the title bars (Hyprland draws none).",
+                               keywords="title bar frame window chrome native")
+        if not osinfo.IS_WINDOWS:
+            follow.setEnabled(False)                    # Windows' contrast themes and title bar only
+            titlebar.setEnabled(False)
 
         def choose() -> None:
             picked = QColorDialog.getColor(QColor(accent["value"] or COLORS["accent"]), self, "Accent color")
@@ -605,6 +615,37 @@ class SettingsDialog(QDialog):
         restyle()
 
     # ---- status bar (instant) ----------------------------------------------------------------------
+    def _build_panel_widget(self) -> None:
+        """Linux: the KDE Plasma panel widget, which shows what the bar shows (plasmoid/, panel_feed.py)."""
+        from linuxdesk import plasmoid
+        self._section("Panel widget")
+        kde = osinfo.desktop() == "kde"
+        feed = self._check("panel_widget_enabled", "Feed the Plasma panel widget",
+                           "A small NEON on your KDE panel: the orb and what I hear and say, with my buttons in its "
+                           "pop-up. Nothing outside this PC can reach it." if kde else
+                           "The panel widget is for KDE Plasma; other desktops can ignore this.",
+                           keywords="plasmoid plasma kde panel widget applet")
+        port = self._number("panel_widget_port", "Port", 1024, 65535, 1, None, "",
+                            "The widget's own settings must use the same one (installing sets it).")
+        state = QLabel("")
+        state.setObjectName("muted")
+        state.setWordWrap(True)
+        install = QPushButton("Update the panel widget" if plasmoid.installed() else "Install the panel widget")
+
+        def do_install() -> None:
+            ok, text = plasmoid.install(int(backend.cfg_num("panel_widget_port")))
+            state.setText(text)
+            if ok:
+                install.setText("Update the panel widget")
+        install.clicked.connect(do_install)
+        self._buttons("", install)
+        self._page.row("", state)
+        if not plasmoid.tool():
+            state.setText("Installing it needs KDE Plasma 6 (kpackagetool6)." if kde else
+                          "Only KDE Plasma 6 can show it.")
+        install.setEnabled(bool(plasmoid.tool()))
+        self._enable_when(feed.isChecked, [port], feed.toggled)
+
     def _build_statusbar(self) -> None:
         self._new_page("statusbar", "Status bar", "\U0001f4ca",
                        "The slim bar along the edge of your screen: where it sits and what it shows.", live=True)
@@ -632,6 +673,9 @@ class SettingsDialog(QDialog):
         self._buttons("", preview)
         shade_parts.append(preview)
         self._enable_when(shade.isChecked, shade_parts, shade.toggled)
+
+        if not osinfo.IS_WINDOWS:
+            self._build_panel_widget()
 
         self._section("Status")
         everything += [self._check("bar_show_orb", "Status orb"),
@@ -1181,14 +1225,25 @@ class SettingsDialog(QDialog):
             "strip remove names parentheses brackets regex pattern clean read summarize", resettable=True),
             strip.changed)
 
-        self._section("Windows' own pop-ups")
-        silence = self._check("notify_silence", "Hide Windows' own pop-ups while I'm running",
-                              "Notifications still reach me. If they stop arriving, I turn Windows' pop-ups back on.")
-        clear = self._check("notify_clear", "Remove each one from Windows' notification list once I've shown it")
-        windows = QPushButton("Open Windows notification settings")
-        windows.clicked.connect(lambda: os.startfile("ms-settings:notifications"))
-        self._buttons("", windows)
-        self._note("Windows' Do Not Disturb works too: notifications keep arriving silently and I still show "
+        import osinfo
+        system = "Windows" if osinfo.IS_WINDOWS else "the desktop"
+        self._section("Windows' own pop-ups" if osinfo.IS_WINDOWS else "The desktop's own pop-ups")
+        silence = self._check("notify_silence", f"Hide {system}' own pop-ups while I'm running"
+                              if osinfo.IS_WINDOWS else "Hide the desktop's own pop-ups while I'm running",
+                              "Notifications still reach me. If they stop arriving, I turn Windows' pop-ups back on."
+                              if osinfo.IS_WINDOWS else "Notifications still reach me. Works with KDE Plasma, swaync, "
+                              "dunst and mako.")
+        clear = self._check("notify_clear", "Remove each one from Windows' notification list once I've shown it"
+                            if osinfo.IS_WINDOWS else "Close each one in the desktop's notification list once "
+                            "I've shown it")
+        if osinfo.IS_WINDOWS or osinfo.desktop() == "kde":
+            windows = QPushButton("Open Windows notification settings" if osinfo.IS_WINDOWS
+                                  else "Open Plasma's notification settings")
+            windows.clicked.connect(lambda: self._open_path("ms-settings:notifications") if osinfo.IS_WINDOWS
+                                    else osinfo.spawn(["systemsettings", "kcm_notifications"]))
+            self._buttons("", windows)
+        self._note(("Windows' Do Not Disturb" if osinfo.IS_WINDOWS else "The desktop's Do Not Disturb") +
+                   " works too: notifications keep arriving silently and I still show "
                    "them. Say \"pause notifications for an hour\" any time to quiet me.")
 
         self._section("Try it")
@@ -1196,7 +1251,8 @@ class SettingsDialog(QDialog):
         result.setObjectName("muted")
         result.setWordWrap(True)
         test = QPushButton("Show a test notification")
-        test.setToolTip("A pretend notification, handled with the saved settings. Nothing is sent to Windows.")
+        test.setToolTip("A pretend notification, handled with the saved settings. Nothing is sent to "
+                        + ("Windows." if osinfo.IS_WINDOWS else "the desktop."))
         test.clicked.connect(lambda: result.setText(self._controller.test_notification()))
         self._buttons("", test)
         p.row("", result)
@@ -1210,6 +1266,20 @@ class SettingsDialog(QDialog):
         p = self._new_page("hotkeys", "Hotkeys", "⌨",
                            "Shortcuts that work in any app. Click a box and press a key combination.")
         self._section("Shortcuts")
+        if not osinfo.IS_WINDOWS:
+            from linuxdesk import keys as linux_keys
+            if osinfo.desktop() == "hyprland":
+                self._note("On Hyprland I add these as keybinds myself (until Hyprland reloads its config, then "
+                           "again when I start). A key already bound in hyprland.conf may do both things.")
+            elif linux_keys.portal_keys.available():
+                self._note("The desktop asks you to confirm these the first time. After that they're listed in its "
+                           "own settings (KDE: System Settings > Keyboard > Shortcuts > NEON Assistant), and "
+                           "that's where to change them: a new key here only counts until you've confirmed one.")
+            else:
+                self._note("This desktop doesn't let apps take keys for themselves, so add each shortcut in its "
+                           "own keyboard settings (KDE: System Settings > Keyboard > Shortcuts > Add New > "
+                           "Command) with the command " + linux_keys.command_line("talk") +
+                           " (or quick, mute, wake, window, dictation instead of talk).")
         for key, label in HOTKEY_ROWS:
             seq = QKeySequenceEdit()
             seq.setMaximumSequenceLength(1)
@@ -1225,13 +1295,14 @@ class SettingsDialog(QDialog):
             help_text = "Hold the keys while you speak; let go when you're done." if key == "hotkey_hold" else ""
             p.row(label, box, help_text)
 
-        self._section("Copilot key")
-        enabled = self._check("copilot_key_enabled", "Use the Copilot key and Win+C for me instead",
-                              "Windows keeps these keys for Copilot, so they can't be set above.")
-        action = self._choice("copilot_key_action", "They should",
-                              [(key.removeprefix("hotkey_"), label) for key, label in HOTKEY_ROWS
-                               if key != "hotkey_hold"])
-        self._enable_when(enabled.isChecked, [action], enabled.toggled)
+        if osinfo.IS_WINDOWS:                            # a Windows key; on Linux it's just another key to bind
+            self._section("Copilot key")
+            enabled = self._check("copilot_key_enabled", "Use the Copilot key and Win+C for me instead",
+                                  "Windows keeps these keys for Copilot, so they can't be set above.")
+            action = self._choice("copilot_key_action", "They should",
+                                  [(key.removeprefix("hotkey_"), label) for key, label in HOTKEY_ROWS
+                                   if key != "hotkey_hold"])
+            self._enable_when(enabled.isChecked, [action], enabled.toggled)
 
         self._section("Quick command box")
         self._number("quick_reply_seconds", "Keep the reply up for", 1.0, 60.0, 0.5, 1, " s",
@@ -1344,16 +1415,21 @@ class SettingsDialog(QDialog):
 
         self._section("Finding files")
         files = self._check("files_enabled", "Find files by name",
-                            "\"Find the file called resume\", then \"open the second one\". Uses Everything, the free "
-                            "file search from voidtools. Programs are never run from a search.",
+                            "\"Find the file called resume\", then \"open the second one\". " +
+                            ("Uses Everything, the free file search from voidtools." if osinfo.IS_WINDOWS else
+                             "Uses plocate (Arch: sudo pacman -S plocate).") +
+                            " Programs are never run from a search.",
                             keywords="everything search files find folder voidtools locate")
-        system_files = self._check("files_include_system", "Also search Windows and program folders",
+        system_files = self._check("files_include_system", "Also search Windows and program folders"
+                                   if osinfo.IS_WINDOWS else "Also search system folders",
                                    "Off: Windows, Program Files, AppData and hidden tool folders are left out, "
-                                   "so your own files come first.")
+                                   "so your own files come first." if osinfo.IS_WINDOWS else
+                                   "Off: system folders (/usr, /etc, /var, /opt...) and hidden folders are left "
+                                   "out, so your own files come first.")
         self.files_state = QLabel("")
         self.files_state.setObjectName("muted")
         self.files_state.setWordWrap(True)
-        self._page.row("Everything", self.files_state)
+        self._page.row("Everything" if osinfo.IS_WINDOWS else "plocate", self.files_state)
         self._enable_when(files.isChecked, [system_files, self.files_state], files.toggled)
         self._refresh_files_state()
 
@@ -1465,7 +1541,8 @@ class SettingsDialog(QDialog):
             "ready": "Running. Searches are instant.",
             "indexing": "Running, still building its index.",
             "stopped": "Installed, not running. I'll start it the first time you ask for a file.",
-            "missing": "Not installed. Install it with winget install voidtools.Everything.",
+            "missing": "Not installed. Install it with winget install voidtools.Everything." if osinfo.IS_WINDOWS
+            else "Not installed. On Arch: sudo pacman -S plocate, then sudo updatedb.",
         }[filesearch.status()])
 
     def _refresh_vault_state(self) -> None:
@@ -1588,7 +1665,7 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _open_path(path) -> None:
         try:
-            os.startfile(str(path))
+            backend._startfile(str(path))
         except OSError:
             pass
 

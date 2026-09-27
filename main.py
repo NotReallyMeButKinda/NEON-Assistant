@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 
 import app_paths
+import osinfo
 
 
 def give_output_a_home() -> None:
@@ -34,7 +35,28 @@ def give_output_a_home() -> None:
         faulthandler.enable(sink)
 
 
+def send_command() -> None:
+    """`--command talk` (how hotkeys reach NEON on Linux, and handy in scripts anywhere): hand the command to
+    the running NEON and exit, before the heavy imports so a keypress answers quickly. If NEON isn't running,
+    `show` starts it; anything else just says so."""
+    if "--command" not in sys.argv:
+        return
+    at = sys.argv.index("--command")
+    command = sys.argv[at + 1].strip().lower() if at + 1 < len(sys.argv) else ""
+    from linuxdesk import single
+    if command not in single.COMMANDS:
+        print(f"Unknown command {command!r}. Commands: {', '.join(single.COMMANDS)}")
+        sys.exit(2)
+    if single.send(command):
+        sys.exit(0)
+    if command != "show":
+        print("NEON ASSISTANT isn't running.")
+        sys.exit(1)
+    del sys.argv[at:at + 2]                          # start NEON normally
+
+
 give_output_a_home()
+send_command()
 
 from PySide6.QtCore import QTimer  # noqa: E402  (after give_output_a_home: imports may print)
 from PySide6.QtGui import QAction, QActionGroup, QIcon
@@ -68,7 +90,10 @@ ERROR_ALREADY_EXISTS = 183
 def already_running():
     """Named mutex so the autostarted copy and a manually launched one don't both run
     (two status bars would fight over the top of the screen). Returns the handle to keep
-    alive, or None if another instance owns it."""
+    alive, or None if another instance owns it. On Linux the command socket (linuxdesk/single.py) does this
+    job once the app exists, so there's nothing to hold here."""
+    if not osinfo.IS_WINDOWS:
+        return 0
     handle = ctypes.windll.kernel32.CreateMutexW(None, False, "NeonAssistantSingleton")
     if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
         return None
@@ -85,6 +110,8 @@ def end_process(code: int = 0) -> None:
         except Exception:  # noqa: BLE001
             pass
     logging.shutdown()
+    if not osinfo.IS_WINDOWS:
+        os._exit(code)
     kernel32 = ctypes.windll.kernel32
     kernel32.GetCurrentProcess.restype = ctypes.c_void_p
     kernel32.TerminateProcess(ctypes.c_void_p(kernel32.GetCurrentProcess()), code)
@@ -100,7 +127,7 @@ def relaunch_without_console() -> bool:
     """Double-clicking main.py (or a shortcut to python.exe) opens a console window just for us.
     Start again under pythonw.exe and let this copy exit (True), so no terminal stays up. From a
     terminal you already had open, or with --console, stay put so print() output shows."""
-    if "--console" in sys.argv or getattr(sys, "frozen", False):
+    if not osinfo.IS_WINDOWS or "--console" in sys.argv or getattr(sys, "frozen", False):
         return False
     kernel32 = ctypes.windll.kernel32
     if not kernel32.GetConsoleWindow():
@@ -123,6 +150,8 @@ def main() -> None:
     neon_log.install()      # a rotating log file + uncaught-exception hooks, before anything can fail
     mutex = already_running()
     if mutex is None:
+        from linuxdesk import single
+        single.send("show")                          # bring the running one's window up instead
         print("NEON ASSISTANT is already running (check the tray).")
         return
 
@@ -134,6 +163,12 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("NEON ASSISTANT")
     app.setApplicationDisplayName("Neon Assistant")
+    from linuxdesk.single import CommandServer
+    commands = {}                                    # filled in below, once everything they use exists
+    command_server = CommandServer(lambda name: commands.get(name, lambda: None)())
+    if not command_server.listen() and not osinfo.IS_WINDOWS:
+        print("NEON ASSISTANT is already running (check the tray).")   # it was asked to show its window
+        return
     if not selftest:
         threading.Thread(target=shortcuts.rename_old, name="Nova-Shortcuts", daemon=True).start()
     theme.FOLLOW["high_contrast"] = backend.cfg_bool("follow_high_contrast")
@@ -150,6 +185,7 @@ def main() -> None:
     app.wiki_popup = WikiPopup(controller)       # likewise: shows what a search found
     app.window_highlight = WindowHighlight(controller)   # outlines the window a "close X?" question is about
     quick = QuickInput(controller)
+    bar.prepare_linux()                          # Hyprland: window rules for the bar before it first opens
 
     def toggle_window() -> None:
         if window.isVisible():
@@ -241,6 +277,15 @@ def main() -> None:
         step(hotkeys.unregister)
         step(copilot_hook.uninstall)
         step(hold_hook.uninstall)
+        step(command_server.close)
+        if panel["server"] is not None:
+            step(panel["server"].stop)
+        if not osinfo.IS_WINDOWS:
+            from ui import wayland_place
+            step(wayland_place.stop_watching)
+        if not osinfo.IS_WINDOWS:
+            from linuxdesk import keys as linux_keys
+            step(linux_keys.portal().close)
         step(quick.hide)
         step(controller.shutdown)
 
@@ -273,9 +318,13 @@ def main() -> None:
     copilot_hook = CopilotKeyHook(on_copilot_key)
     hold_hook = HoldKeyHook(controller.hold_start, controller.hold_stop)
     app.installNativeEventFilter(hotkeys)
+    if not osinfo.IS_WINDOWS:                    # the desktop's shortcut portal reports problems here
+        from linuxdesk import keys as linux_keys
+        linux_keys.portal().status.connect(lambda text: controller.message.emit("system", text))
 
     def apply_hotkey() -> None:
-        errors = hotkeys.apply([(label, backend.CONFIG.get(key, ""), actions[key.removeprefix("hotkey_")])
+        errors = hotkeys.apply([(label, backend.CONFIG.get(key, ""), actions[key.removeprefix("hotkey_")],
+                                 key.removeprefix("hotkey_"))
                                 for key, label in HOTKEY_ROWS if key != "hotkey_hold"])   # hold needs key-up: own hook
         hold_error = hold_hook.set_combo(str(backend.CONFIG.get("hotkey_hold", "")))
         if hold_error:
@@ -289,6 +338,44 @@ def main() -> None:
             controller.message.emit("system", error)
 
     controller.settings_saved.connect(apply_hotkey)
+    if not osinfo.IS_WINDOWS:
+        # Hyprland forgets runtime binds, window rules and reserved space when its config reloads: set them again.
+        from ui import wayland_place
+
+        def after_hyprland_reload() -> None:
+            apply_hotkey()
+            bar.relayout_linux()
+        wayland_place.watch_reloads(after_hyprland_reload)
+
+    def show_window() -> None:
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    # `--command <name>` from a compositor keybind, a desktop shortcut or a script (linuxdesk/single.py)
+    commands.update(actions)
+    commands.update({"show": show_window, "stop": controller.stop_speaking, "hold-start": controller.hold_start,
+                     "hold-stop": controller.hold_stop, "settings": open_settings, "board": open_board,
+                     "quit": quit_app})
+    panel = {"server": None, "port": 0}
+
+    def apply_panel(*_args) -> None:
+        """The KDE Plasma panel widget follows the bar through this feed (panel_feed.py, plasmoid/)."""
+        want = not osinfo.IS_WINDOWS and backend.cfg_bool("panel_widget_enabled")
+        port = int(backend.cfg_num("panel_widget_port"))
+        if panel["server"] is not None and (not want or port != panel["port"]):
+            panel["server"].stop()
+            panel["server"] = None
+        if want and panel["server"] is None:
+            import panel_feed
+            panel["server"] = panel_feed.connect(controller, lambda name: commands.get(name, lambda: None)(), port)
+            panel["port"] = port
+            if panel["server"] is None:
+                controller.message.emit("system", f"The panel widget's feed couldn't use port {port}; "
+                                                  "pick another in Settings > Status bar.")
+    apply_panel()
+    controller.settings_saved.connect(apply_panel)
+    controller.live_changed.connect(apply_panel)
     controller.live_changed.connect(lambda keys: frame.refresh_all() if "custom_titlebar" in keys else None)
     controller.quit_requested.connect(quit_app)
     controller.onboarding_requested.connect(open_onboarding)
@@ -330,7 +417,8 @@ def main() -> None:
     controller.persona_changed.connect(show_persona)
     controller.settings_saved.connect(lambda: show_persona(str(backend.CONFIG.get("persona", "default"))))
 
-    notify_action = QAction("Take over Windows notifications", menu)
+    notify_action = QAction("Take over Windows notifications" if osinfo.IS_WINDOWS else "Take over notifications",
+                            menu)
     notify_action.setCheckable(True)
     notify_action.setChecked(backend.cfg_bool("notify_enabled"))
 
@@ -384,6 +472,8 @@ def main() -> None:
 
     # Autostart launches with --minimized: straight to tray + status bar.
     minimized = "--minimized" in sys.argv or backend.cfg_bool("start_minimized")
+    if minimized and not QSystemTrayIcon.isSystemTrayAvailable() and not backend.cfg_bool("show_status_bar"):
+        minimized = False            # no tray (Hyprland without one) and no bar: hidden would mean unreachable
     if not minimized:
         window.show()
     if backend.cfg_bool("show_status_bar"):
@@ -400,7 +490,8 @@ def main() -> None:
                                "timers": open_timers, "board": open_board},
                               quit_app, backend.CONFIG, after[0] if after else None)
     code = app.exec()
-    ctypes.windll.kernel32.CloseHandle(mutex)
+    if osinfo.IS_WINDOWS:
+        ctypes.windll.kernel32.CloseHandle(mutex)
     # Everything is cleaned up and all remaining threads are daemons; end the process directly
     # rather than relying on interpreter teardown (PortAudio / ONNX / Qt objects) to finish.
     end_process(code)

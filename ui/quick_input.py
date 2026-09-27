@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QFrame, QGraphicsDropShadowEffect, QHBoxLayout, Q
 import assistant as backend
 import hotkeys
 
+from . import wayland_place
 from .motion import animations_enabled
 from .theme import COLORS
 from .theme import signals as theme_signals
@@ -148,6 +149,8 @@ class QuickInput(QWidget):
         self._slide.setEasingCurve(QEasingCurve.OutCubic)
         self._anim.addAnimation(self._fade)
         self._anim.addAnimation(self._slide)
+        self._anim.finished.connect(lambda: wayland_place.settle(self))
+        wayland_place.prepare(self, "NEON quick box")
 
         theme_signals.changed.connect(self._restyle)
         self._restyle()
@@ -232,6 +235,7 @@ class QuickInput(QWidget):
         self._return_to = foreground if foreground and foreground != int(self.winId()) and full is None else 0
         self.show()
         keep_on_top(int(self.winId()))
+        wayland_place.settle(self)
         if animate:
             self._anim.start()
         self.edit.setFocus(Qt.OtherFocusReason)
@@ -318,6 +322,8 @@ class QuickInput(QWidget):
         height = needed + margins.top() + margins.bottom()
         self.setMinimumHeight(0)                 # a taller earlier reply must not hold the minimum up
         self.resize(self.width(), max(self.minimumSizeHint().height(), height))
+        if self.isVisible():
+            wayland_place.settle(self)
 
     def _on_caption(self, sender: str, text: str) -> None:
         if self._awaiting and self.isVisible() and sender != "You":

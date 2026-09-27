@@ -190,3 +190,9 @@ class MediaWatcher:
                     proc.stdout.close()
                 except (OSError, ValueError):
                     pass
+
+
+import osinfo  # noqa: E402
+
+if not osinfo.IS_WINDOWS:                   # Linux: MPRIS through playerctl (linuxdesk/media.py)
+    from linuxdesk.media import MediaWatcher, friendly as friendly_app  # noqa: F401,F811

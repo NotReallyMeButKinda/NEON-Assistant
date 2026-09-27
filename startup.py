@@ -9,9 +9,11 @@ throwing the main window in your face.
 
 from __future__ import annotations
 
-import winreg
-
 import app_paths
+import osinfo
+
+if osinfo.IS_WINDOWS:
+    import winreg
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "NeonAssistant"
@@ -40,3 +42,28 @@ def set_enabled(enabled: bool) -> None:
                 winreg.DeleteValue(key, VALUE_NAME)
             except FileNotFoundError:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Linux: an XDG autostart entry (~/.config/autostart), which KDE Plasma and most desktops run at sign-in.
+# Hyprland runs them when started through uwsm, or with `exec-once = dex -a` (see INSTALL.md).
+# ---------------------------------------------------------------------------
+
+if not osinfo.IS_WINDOWS:
+    from linuxdesk import apps as _apps
+
+    def _autostart_file():
+        return _apps.config_home() / "autostart" / _apps.DESKTOP_ID
+
+    def is_enabled() -> bool:  # noqa: F811
+        return _autostart_file().is_file()
+
+    def set_enabled(enabled: bool) -> None:  # noqa: F811
+        path = _autostart_file()
+        if not enabled:
+            path.unlink(missing_ok=True)
+            return
+        import shortcuts
+        _apps.write_entry(path, _apps.entry_text("Neon Assistant", startup_command(), shortcuts.icon_path(),
+                                                 "Start NEON when you sign in",
+                                                 {"X-GNOME-Autostart-enabled": "true"}))

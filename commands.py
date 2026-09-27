@@ -174,7 +174,10 @@ def spoken_music_command(text: str) -> tuple[str, object, bool] | None:
         return "set_volume", int(m.group(1)), True
 
     m = (re.fullmatch(rf"play (?P<q>.+?) (?:on|in|using|from|with) {_YTM_NAME}", t)
-         or re.fullmatch(r"play (?:the )?(?:song|track|tune|songs|music) (?P<q>.+)", t))
+         or re.fullmatch(r"play (?:the )?(?:song|track|tune|songs|music) (?P<q>.+)", t)
+         # albums and playlists keep the word: ytmusic.wanted_kind() looks for it
+         or re.fullmatch(r"play (?P<q>(?:the )?(?:album|playlist) .+)", t)
+         or re.fullmatch(r"play (?P<q>.+ (?:album|playlist)(?: by .+)?)", t))
     query = re.sub(r"^by\s+", "", m.group("q").strip()) if m else ""   # "play music by toto"
     if query:
         return "search_and_play", query, True

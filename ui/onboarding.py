@@ -23,6 +23,7 @@ import assistant as backend
 import bitwarden
 import browser_bridge
 import hotkeys
+import osinfo
 import stt
 import tts
 
@@ -444,7 +445,8 @@ class OnboardingDialog(QDialog):
         inner.addWidget(self.more_voice)
         self.more_voice.changed.connect(self._other_voice_picked)
         self.voice_group.buttonClicked.connect(lambda _b: self.more_voice.set_value(""))
-        self.use_windows = QCheckBox("Use the Windows voice instead (no download)")
+        self.use_windows = QCheckBox("Use the Windows voice instead (no download)" if osinfo.IS_WINDOWS
+                                     else "Use the system voice instead (espeak-ng, no download)")
         self.use_windows.setChecked(not piper_now)
         inner.addWidget(self.use_windows)
         layout.addWidget(more)
@@ -638,9 +640,10 @@ class OnboardingDialog(QDialog):
         self._get["theme"] = lambda: self._picked(self.theme_group) or now
         layout.addLayout(grid)
 
-        more, inner = self._card("Windows and the status bar")
+        more, inner = self._card("Windows and the status bar" if osinfo.IS_WINDOWS else "The status bar")
         self.titlebar = QCheckBox("Use NEON's own title bar on my windows")
         self.titlebar.setChecked(backend.cfg_bool("custom_titlebar"))
+        self.titlebar.setVisible(osinfo.IS_WINDOWS)          # on Linux the desktop draws title bars
         self.bar_show = QCheckBox("Show the status bar (what I hear and say, plus a clock and widgets)")
         self.bar_show.setChecked(backend.cfg_bool("show_status_bar"))
         self.bar_pos = QComboBox()
@@ -662,7 +665,7 @@ class OnboardingDialog(QDialog):
     # ================================================================================================
     def _page_connections(self) -> QWidget:
         page, layout = self._page("Connections", "Optional extras. Leave any of them off; they're all in Settings.")
-        notify, inner = self._card("Windows notifications", "I show them in the status bar and can read or "
+        notify, inner = self._card("Windows notifications" if osinfo.IS_WINDOWS else "Notifications", "I show them in the status bar and can read or "
                                                              "summarize them for you.")
         self.notify = QCheckBox("Handle my notifications")
         self.notify.setChecked(backend.cfg_bool("notify_enabled"))
@@ -678,8 +681,9 @@ class OnboardingDialog(QDialog):
         inner.addWidget(self.notify_ask)
         layout.addWidget(notify)
 
-        music, inner = self._card("Music", "Play, pause and skip work with any player through Windows. Pear Desktop "
-                                           "(YouTube Music) also gets \"play Daft Punk\" and likes.")
+        music, inner = self._card("Music", "Play, pause and skip work with any player" +
+                                  (" through Windows" if osinfo.IS_WINDOWS else "") +
+                                  ". Pear Desktop (YouTube Music) also gets \"play Daft Punk\" and likes.")
         self.music = QCheckBox("Control Pear Desktop when it's running")
         self.music.setChecked(backend.cfg_bool("ytm_enabled"))
         inner.addWidget(self.music)
@@ -748,13 +752,14 @@ class OnboardingDialog(QDialog):
             [("off", "Leave it alone", "It does what Windows normally does."),
              ("talk", "Start listening", "Press it and speak."),
              ("quick", "Quick command box", "A small box to type a command.")],
-            action if on and action in ("talk", "quick") else "off", columns=3)
+            action if on and action in ("talk", "quick") and osinfo.IS_WINDOWS else "off", columns=3)
         inner.addWidget(box)
         layout.addWidget(copilot)
+        copilot.setVisible(osinfo.IS_WINDOWS)                # a Windows key; on Linux any key is bound above
 
         import shortcuts
         opener, inner = self._card("Opening me", "Shortcuts to start me, like any other app.")
-        self.start_menu_box = QCheckBox("Put me in the Start menu")
+        self.start_menu_box = QCheckBox("Put me in the Start menu" if osinfo.IS_WINDOWS else "Put me in the app menu")
         self.start_menu_box.setChecked(True if not backend.cfg_bool("onboarding_done") else shortcuts.exists("start_menu"))
         self.desktop_box = QCheckBox("Put a shortcut to me on the desktop")
         self.desktop_box.setChecked(shortcuts.exists("desktop"))
@@ -807,7 +812,7 @@ class OnboardingDialog(QDialog):
         return page
 
     def _summary_html(self) -> str:
-        voice = ("the Windows voice" if self.use_windows.isChecked()
+        voice = (("the Windows voice" if osinfo.IS_WINDOWS else "the system voice") if self.use_windows.isChecked()
                  else tts.voice_label(self._chosen_voice()) or self._chosen_voice())
         wake = self._get["assistant_name"]().lower() if self._get["name_is_wake_word"]() else "hey nova"
         keys = [f"{label}: {spec}" for key, label in SHORTCUTS if (spec := self._shortcut_values().get(key))]

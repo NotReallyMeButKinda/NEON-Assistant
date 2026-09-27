@@ -7,7 +7,9 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+import osinfo
+
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if osinfo.IS_WINDOWS else None
 
 
 class _MEMORYSTATUSEX(ctypes.Structure):
@@ -88,3 +90,7 @@ def process_names() -> set[str]:
     finally:
         _kernel32.CloseHandle(snapshot)
     return names
+
+
+if not osinfo.IS_WINDOWS:                       # Linux: /proc and /sys
+    from linuxdesk.system import CpuMeter, battery, process_names, ram_percent  # noqa: F401,F811

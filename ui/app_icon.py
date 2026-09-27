@@ -2,7 +2,7 @@
 app_icon.py -- NEON's glowing dot (the orb): the tray icon, the window icon, the .exe icon and the
 browser extension's icon all come from paint_orb(), so they always look the same.
 
-    python -m ui.app_icon        -> rewrites icons/neon.ico and browser_extension/icons/neon-*.png
+    python -m ui.app_icon        -> rewrites icons/neon.ico, icons/neon.png and browser_extension/icons/neon-*.png
 """
 
 from __future__ import annotations
@@ -100,7 +100,9 @@ def write_all() -> list[Path]:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # nothing is shown
     app = QApplication.instance() or QApplication([])   # QPixmap needs one  # noqa: F841
     colors = default_colors()
-    return [write_ico(ROOT / "icons" / "neon.ico", colors),
+    png = ROOT / "icons" / "neon.png"                   # Linux .desktop entries and the Arch package
+    paint_orb(256, colors).save(str(png), "PNG")
+    return [write_ico(ROOT / "icons" / "neon.ico", colors), png,
             *write_extension_icons(ROOT / "browser_extension" / "icons", colors)]
 
 

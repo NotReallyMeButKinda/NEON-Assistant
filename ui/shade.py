@@ -20,15 +20,22 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QRadialGradien
 from PySide6.QtWidgets import QWidget
 
 import assistant as backend
+import osinfo
 
+from . import wayland_place
 from .motion import animations_enabled
 from .status_bar import _MONITORINFO, list_monitors
 from .theme import COLORS
 
-user32 = ctypes.windll.user32
-user32.GetForegroundWindow.restype = wintypes.HWND
-user32.MonitorFromWindow.restype = wintypes.HANDLE
-user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+if osinfo.IS_WINDOWS:
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.MonitorFromWindow.restype = wintypes.HANDLE
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+else:
+    user32 = None
+
+SHADE_TITLE = "NEON shade"          # Hyprland's window rules find the shade by this exact title
 
 MONITOR_DEFAULTTONEAREST = 2
 QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE = 2, 3, 4
@@ -97,6 +104,10 @@ def fullscreen_monitor() -> tuple | None:
     return monitor if _exclusive_fullscreen() else None
 
 
+if not osinfo.IS_WINDOWS:
+    from linuxdesk.wm import fullscreen_monitor  # noqa: F811  (hyprctl / kdotool; layout pixels)
+
+
 def _readable(text: str) -> str:
     """Markdown symbols out, and only the latest part of a long reply."""
     text = re.sub(r"[*_`#>~|]+", "", " ".join(str(text).split()))
@@ -114,6 +125,8 @@ class Shade(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setWindowTitle(SHADE_TITLE)
+        self._ruled = False                           # Linux (Hyprland): its window rule is set
         self._label = ""
         self._text = ""
         self._reveal = 0.0                            # 0 = up out of sight, 1 = fully down
@@ -226,9 +239,21 @@ class Shade(QWidget):
         left, top, right, _bottom = monitor
         scale = next((m[4] for m in list_monitors() if tuple(m[:4]) == tuple(monitor)), 1.0) or 1.0
         width = (right - left) / scale
+        if not osinfo.IS_WINDOWS:
+            self._place_linux(left, top, int(width))
+            return
         self.resize(int(width), WINDOW_PX)
         user32.SetWindowPos(wintypes.HWND(int(self.winId())), wintypes.HWND(HWND_TOPMOST), left, top,
                             int(width * scale), int(WINDOW_PX * scale), SWP_NOACTIVATE | SWP_SHOWWINDOW)
+
+    def _place_linux(self, x: int, y: int, width: int) -> None:
+        """Linux: through the compositor's window rules (ui/wayland_place.py): floating on every workspace,
+        unfocused and borderless, across the top of the monitor."""
+        if not self._ruled:
+            wayland_place.prepare(self, SHADE_TITLE, focus=False)
+            self._ruled = True
+        self.setGeometry(x, y, width, WINDOW_PX)
+        wayland_place.settle(self, fixed_size=True)   # _show() shows it right after this
 
     def _layout(self) -> tuple[QRectF, QRectF]:
         """Where the label and the text go: centred, wrapped to a comfortable width."""

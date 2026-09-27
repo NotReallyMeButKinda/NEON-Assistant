@@ -53,7 +53,9 @@ _REPLY_ID = 0x4E454F4E                         # "NEON": the dwData Everything e
 _UNKNOWN_TIME = (0, 0xFFFFFFFFFFFFFFFF)
 
 LRESULT = ctypes.c_ssize_t
-WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+# (Linux has no WINFUNCTYPE; the IPC code below only ever runs on Windows)
+WNDPROC = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                                           wintypes.LPARAM)
 
 
 class COPYDATASTRUCT(ctypes.Structure):
@@ -84,7 +86,9 @@ class EverythingError(Exception):
     """Everything isn't installed, isn't running, or didn't answer. The message is ready to say."""
 
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True) if os.name == "nt" else None
+import osinfo  # noqa: E402
+
+_user32 = ctypes.WinDLL("user32", use_last_error=True) if osinfo.IS_WINDOWS else None
 _API: dict = {}
 
 
@@ -610,3 +614,35 @@ def handle_file_command(text: str, system: bool = False, today: date | None = No
     many = f"{len(hits)}" if len(hits) < 60 else "lots of"
     return (f"I found {many} {_what(command)}. The best match is {best.name} {where}. "
             f"Say \"open the first one\", or another number, to open it.")
+
+
+# ---------------------------------------------------------------------------
+# Linux: plocate instead of Everything; xdg-open and the file manager instead of Explorer
+# ---------------------------------------------------------------------------
+
+import osinfo  # noqa: E402
+
+if not osinfo.IS_WINDOWS:
+    from linuxdesk import apps as _apps
+    from linuxdesk import files as _files
+
+    # Programs and scripts are never run from a search there either.
+    RUNNABLE = RUNNABLE | {"sh", "bash", "zsh", "fish", "appimage", "run", "desktop", "py", "pl", "rb", "bin",
+                           "flatpakref", "deb", "rpm", "zst"}
+
+    def status() -> str:  # noqa: F811
+        return _files.status()
+
+    def ensure_running(wait: float = 8.0) -> None:  # noqa: F811
+        if not _files.tool():
+            raise EverythingError(_files.MISSING)
+
+    def search(words: str, kind: str = "", system: bool = False, max_results: int = 60) -> list[Hit]:  # noqa: F811
+        ensure_running()
+        return rank(_files.search(words, KINDS.get(kind, kind), system, max_results), words)
+
+    def _open_on_linux(path: str) -> None:
+        if not _apps.open_target(path):
+            raise OSError("no app to open it with (is xdg-utils installed?)")
+
+    ACTIONS.update(open=_open_on_linux, reveal=_apps.reveal)

@@ -70,7 +70,11 @@ class MediaAndMusicTests(unittest.TestCase):
                  "skip ahead 30 seconds": ("seek", 30), "go back 10 seconds": ("seek", -10),
                  "rewind two minutes": ("seek", -120), "set volume to fifty percent": ("set_volume", 50),
                  "play glass beach on youtube music": ("search_and_play", "glass beach"),
-                 "play music by toto": ("search_and_play", "toto")}
+                 "play music by toto": ("search_and_play", "toto"),
+                 "play the album nurture by porter robinson": ("search_and_play", "the album nurture by porter robinson"),
+                 "play worlds album": ("search_and_play", "worlds album"),
+                 "play the tummy ache album by stomach book": ("search_and_play", "the tummy ache album by stomach book"),
+                 "play my chill playlist": ("search_and_play", "my chill playlist")}
         for text, (method, arg) in cases.items():
             got = a.spoken_music_command(text)
             self.assertIsNotNone(got, text)

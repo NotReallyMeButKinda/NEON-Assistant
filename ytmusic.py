@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -28,6 +29,19 @@ DEFAULT_URL = "http://127.0.0.1:26538"
 DEFAULT_CLIENT_ID = "neon-assistant"
 SECRET_NAME = "ytm-tokens"       # the Windows Credential Manager entry holding the access tokens
 DOWN_BACKOFF = 8.0          # seconds to skip the API after a failed connection
+
+# Albums and playlists: Pear Desktop's API can search and queue single songs, but not list an album's
+# tracks, so those come from YouTube Music itself (the same public request its web page makes).
+INNERTUBE = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
+INNERTUBE_NEXT = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
+INNERTUBE_CLIENT = {"clientName": "WEB_REMIX", "clientVersion": "1.20250915.01.00", "hl": "en", "gl": "US"}
+ALBUMS_FILTER = "EgWKAQIYAWoMEA4QChADEAQQCRAF"      # YouTube Music's "Albums" search filter
+MAX_TRACKS = 100
+_KIND_WORDS = {"album", "single", "ep", "playlist", "song", "video", "artist", "episode", "podcast", "profile"}
+_PAGE_KINDS = {"MUSIC_PAGE_TYPE_ALBUM": "album", "MUSIC_PAGE_TYPE_PLAYLIST": "playlist",
+               "MUSIC_PAGE_TYPE_ARTIST": "artist", "MUSIC_PAGE_TYPE_USER_CHANNEL": "artist"}
+_ALBUM_WORDS = re.compile(r"\b(?:the\s+)?(?:album|record|lp|ep)\b", re.I)
+_PLAYLIST_WORDS = re.compile(r"\b(?:the\s+)?playlist\b", re.I)
 
 _MESSAGES = {
     "play": "Playing.", "pause": "Paused.", "toggle": "Toggled play and pause.",
@@ -68,8 +82,32 @@ def _first_video_id(node) -> str | None:
     return None
 
 
+class _Row(tuple):
+    """(video id, is the current song), plus `ids`: every video id of the entry. A song with a music video is
+    one entry with two ids (the video's and the audio track's), and either may be the one that was queued."""
+    ids: frozenset = frozenset()
+
+
+def _all_video_ids(node) -> frozenset:
+    found, stack = set(), [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            vid = cur.get("videoId")
+            if isinstance(vid, str) and re.fullmatch(r"[\w-]{11}", vid):
+                found.add(vid)
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return frozenset(found)
+
+
+def _has(row, video_id: str) -> bool:
+    return video_id == row[0] or video_id in getattr(row, "ids", ())
+
+
 def _queue_rows(data) -> list[tuple[str | None, bool]]:
-    """(video id, is the current song) for each queue entry, in order."""
+    """(video id, is the current song) for each queue entry, in order (each also carries `.ids`)."""
     rows = []
     for item in (data or {}).get("items", []) if isinstance(data, dict) else []:
         renderer = item.get("playlistPanelVideoRenderer") if isinstance(item, dict) else None
@@ -77,8 +115,161 @@ def _queue_rows(data) -> list[tuple[str | None, bool]]:
             wrapper = item.get("playlistPanelVideoWrapperRenderer") or {}
             renderer = wrapper.get("primaryRenderer", {}).get("playlistPanelVideoRenderer")
         renderer = renderer or {}
-        rows.append((renderer.get("videoId") or _first_video_id(item), bool(renderer.get("selected"))))
+        row = _Row((renderer.get("videoId") or _first_video_id(item), bool(renderer.get("selected"))))
+        row.ids = _all_video_ids(item)
+        rows.append(row)
     return rows
+
+
+def _runs_text(node) -> list[str]:
+    return [str(r.get("text", "")) for r in (node or {}).get("runs", []) if isinstance(r, dict)]
+
+
+def _result(renderer: dict, card: bool) -> dict | None:
+    """One search result as {"kind", "title", "artist", "video_id", "browse_id"}: kind is song / album /
+    playlist / artist."""
+    if card:                                          # the "Top result" card
+        title_runs = (renderer.get("title") or {}).get("runs") or [{}]
+        endpoint = title_runs[0].get("navigationEndpoint") or {}
+        title = str(title_runs[0].get("text", ""))
+        details = _runs_text(renderer.get("subtitle"))
+    else:                                             # a row in a list of results
+        endpoint = renderer.get("navigationEndpoint") or {}
+        columns = [c.get("musicResponsiveListItemFlexColumnRenderer", {}).get("text")
+                   for c in renderer.get("flexColumns", [])]
+        title = "".join(_runs_text(columns[0])) if columns else ""
+        details = _runs_text(columns[1]) if len(columns) > 1 else []
+    parts = [p.strip() for p in details if p.strip() and p.strip() != "\u2022"]
+    if parts and parts[0].lower() in _KIND_WORDS:
+        parts = parts[1:]
+    artist = parts[0] if parts else ""
+    browse = endpoint.get("browseEndpoint") or {}
+    if browse.get("browseId"):
+        page = (browse.get("browseEndpointContextSupportedConfigs") or {}).get(
+            "browseEndpointContextMusicConfig", {}).get("pageType", "")
+        playlist = _first_key(renderer, "watchPlaylistEndpoint").get("playlistId") or             (browse["browseId"][2:] if browse["browseId"].startswith("VL") else None)
+        return {"kind": _PAGE_KINDS.get(page, "other"), "title": title, "artist": artist, "video_id": None,
+                "browse_id": browse["browseId"], "playlist_id": playlist}
+    video = (endpoint.get("watchEndpoint") or {}).get("videoId") or \
+        (renderer.get("playlistItemData") or {}).get("videoId") or _first_video_id(renderer)
+    if video:
+        return {"kind": "song", "title": title, "artist": artist, "video_id": video, "browse_id": None,
+                "playlist_id": None}
+    return None
+
+
+def _first_key(node, key: str) -> dict:
+    """The first dict under `key` anywhere in node (document order), or {}."""
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            if isinstance(cur.get(key), dict):
+                return cur[key]
+            stack.extend(reversed(list(cur.values())))
+        elif isinstance(cur, list):
+            stack.extend(reversed(cur))
+    return {}
+
+
+def _results(data) -> list[dict]:
+    """A YouTube Music search response's results, in the order they're shown (the top result first)."""
+    found, stack = [], [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, card in (("musicCardShelfRenderer", True), ("musicResponsiveListItemRenderer", False)):
+                if isinstance(node.get(key), dict):
+                    result = _result(node[key], card)
+                    if result:
+                        found.append(result)
+                    if card:                          # the card's own list (more by the artist...) comes after it
+                        stack.append(node[key].get("contents"))
+                    break
+            else:
+                stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return found
+
+
+def _innertube(url: str, payload: dict, timeout: float):
+    body = json.dumps(dict(payload, context={"client": INNERTUBE_CLIENT})).encode("utf-8")
+    request = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/json", "Origin": "https://music.youtube.com",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as reply:
+            return json.loads(reply.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+
+
+def collection_tracks(pick: dict, timeout: float = 10.0, attempts: int = 3) -> list[str]:
+    """The video ids of an album's or playlist's tracks, in order; [] if YouTube Music can't say.
+
+    First what its own Play button asks for (the "next" request for the album's playlist, which has been
+    reliable), then the album / playlist page (which now and then comes back empty, so it's retried)."""
+    if pick.get("playlist_id"):
+        for attempt in range(attempts):
+            data = _innertube(INNERTUBE_NEXT, {"playlistId": pick["playlist_id"], "isAudioOnly": True,
+                                               "enablePersistentPlaylistPanel": True}, timeout)
+            tracks = queue_ids(data)
+            if tracks:
+                return tracks
+            time.sleep(0.3 * (attempt + 1))
+    if pick.get("browse_id"):
+        for attempt in range(attempts):
+            tracks = track_ids(_innertube(INNERTUBE, {"browseId": pick["browse_id"]}, timeout))
+            if tracks:
+                return tracks
+            time.sleep(0.3 * (attempt + 1))
+    return []
+
+
+def queue_ids(data) -> list[str]:
+    """The songs of a "next" (watch playlist) answer: its playlist panel, in order."""
+    ids, stack = [], [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            panel = node.get("playlistPanelVideoRenderer")
+            if isinstance(panel, dict):
+                if panel.get("videoId") and panel["videoId"] not in ids:
+                    ids.append(panel["videoId"])
+                continue
+            stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return ids[:MAX_TRACKS]
+
+
+def track_ids(page) -> list[str]:
+    """The tracks of an album or playlist page: its list rows (not the "more from" carousels)."""
+    ids, stack = [], [page]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            row = node.get("musicResponsiveListItemRenderer")
+            if isinstance(row, dict):
+                vid = (row.get("playlistItemData") or {}).get("videoId")
+                if vid and vid not in ids:
+                    ids.append(vid)
+                continue
+            stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return ids[:MAX_TRACKS]
+
+
+def wanted_kind(query: str) -> tuple[str, str]:
+    """("album" / "playlist" / "", the query without those words): "play the album Nurture by Porter
+    Robinson" asks for the album even if a song by that name is the top result."""
+    for kind, words in (("album", _ALBUM_WORDS), ("playlist", _PLAYLIST_WORDS)):
+        if words.search(query):
+            cleaned = " ".join(words.sub(" ", query).split())
+            return kind, re.sub(r"^(?:by|from)\s+", "", cleaned) or query
+    return "", query
 
 
 def _describe(song: dict) -> str:
@@ -92,6 +283,8 @@ class Client:
         self._token_path = token_path  # legacy plain-text store: migrated into Credential Manager on first use
         self._secret = secret_name
         self._down_until = 0.0        # after a failed connection, don't retry for a moment (see _request)
+        self._fill = 0                # bumped by every "play ...": an album still being queued stops
+        self.fill_thread: threading.Thread | None = None
 
     # ---- config ------------------------------------------------------------------
     @property
@@ -267,31 +460,112 @@ class Client:
         return "Shuffled the queue."
 
     def search_and_play(self, query: str) -> str:
-        """Search YouTube Music, queue the top result right after the current song and skip to it."""
+        """Search YouTube Music and play the top result. A song is queued right after the current one and
+        skipped to; an album or playlist plays from its first track, with the rest queued after it in order."""
+        self._fill += 1                               # a new request: stop queueing the last album
+        kind, query = wanted_kind(query)
         data = self._request("POST", "/api/v1/search", {"query": query}, timeout=12)
-        video_id = _first_video_id(data)
+        results = _results(data)
+        pick = next((r for r in results if r["kind"] == kind), None) if kind else (results[0] if results else None)
+        if kind == "album" and pick is None:
+            data = self._request("POST", "/api/v1/search", {"query": query, "params": ALBUMS_FILTER}, timeout=12)
+            pick = next((r for r in _results(data) if r["kind"] == "album"), None)
+        if pick and pick["kind"] in ("album", "playlist"):
+            tracks = collection_tracks(pick)
+            if tracks:
+                return self._play_collection(pick, tracks)
+        video_id = pick["video_id"] if pick and pick["video_id"] else _first_video_id(data)
         if not video_id:
             raise YTMError(f"I couldn't find {query} on YouTube Music.")
+        return self._play_now(video_id, query)
+
+    def _play_collection(self, pick: dict, tracks: list[str]) -> str:
+        name = pick["title"] + (f" by {pick['artist']}" if pick["artist"] and pick["kind"] == "album" else "")
+        started = self._play_now(tracks[0], name)
+        if not started.startswith("Playing"):
+            return started
+        if len(tracks) > 1:
+            fill = self._fill
+            self.fill_thread = threading.Thread(target=self._queue_rest, args=(tracks, fill),
+                                                name="Nova-YTMQueue", daemon=True)
+            self.fill_thread.start()
+        count = f"{len(tracks)} songs" if len(tracks) != 1 else "1 song"
+        return f"Playing {name}: {count}."
+
+    def _queue_rows(self) -> list[tuple[str | None, bool]]:
+        return _queue_rows(self._request("GET", "/api/v1/queue"))
+
+    def _queue_rest(self, tracks: list[str], fill: int) -> None:
+        """Put tracks[1:] right after the one playing, in order. Pear Desktop adds each one a moment after it's
+        asked, and not always where it was asked, so each is found once it lands and moved into place."""
+        try:
+            for position, video_id in enumerate(tracks[1:], 1):
+                if fill != self._fill:
+                    return                            # another "play ..." came in
+                before = self._queue_rows()
+                self._request("POST", "/api/v1/queue",
+                              {"videoId": video_id, "insertPosition": "INSERT_AFTER_CURRENT_VIDEO"})
+                after = before
+                deadline = time.monotonic() + 4
+                while time.monotonic() < deadline and len(after) <= len(before):
+                    time.sleep(0.15)
+                    after = self._queue_rows()
+                landed = _new_index(before, after, video_id)
+                current = next((i for i, (_vid, selected) in enumerate(after) if selected), -1)
+                if landed is None or current < 0:
+                    continue
+                anchor = next((i for i in range(current, -1, -1) if _has(after[i], tracks[0])), current)
+                target = anchor + position
+                if landed != target and target < len(after):
+                    self._request("PATCH", f"/api/v1/queue/{landed}", {"toIndex": target})
+                    time.sleep(0.1)
+        except (Unavailable, YTMError):
+            return
+
+    def _play_now(self, video_id: str, query: str) -> str:
+        """Queue one song right after the current one and skip to it."""
+        before = self._queue_rows()
         self._request("POST", "/api/v1/queue", {"videoId": video_id, "insertPosition": "INSERT_AFTER_CURRENT_VIDEO"})
-        # Where it landed isn't reliable (a live test put it *behind* the up-next track), so find
-        # it in the queue and jump straight to that index instead of skipping with "next".
-        time.sleep(0.5)
-        rows = _queue_rows(self._request("GET", "/api/v1/queue"))
-        current = next((i for i, (_vid, selected) in enumerate(rows) if selected), -1)
-        hits = [i for i, (vid, _sel) in enumerate(rows) if vid == video_id]
-        if not hits:
+        # Pear adds it a moment later, and where it lands isn't reliable (a live test put it *behind* the up-next
+        # track), so wait for it to appear and jump straight to it instead of skipping with "next".
+        index = None
+        deadline = time.monotonic() + 4
+        while index is None and time.monotonic() < deadline:
+            time.sleep(0.2)
+            index = _new_index(before, self._queue_rows(), video_id)
+        if index is None:
             return f"I couldn't find {query} in the queue after adding it."
-        index = next((i for i in hits if i > current), hits[-1])
+        rows = self._queue_rows()
+        current = next((i for i, (_vid, selected) in enumerate(rows) if selected), -1)
+        if 0 <= current and index > current + 1:          # landed late: right after the current song, then play
+            self._request("PATCH", f"/api/v1/queue/{index}", {"toIndex": current + 1})
+            index = current + 1
         self._request("PATCH", "/api/v1/queue", {"index": index})
+        # Playing when the queue has moved to it. (Not by the song's id: a song with a music video plays
+        # under its audio track's id, which may not be the one that was queued.)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            time.sleep(0.5)
-            song = self.song()
-            if song and song.get("videoId") == video_id:
+            time.sleep(0.4)
+            rows = self._queue_rows()
+            if 0 <= index < len(rows) and rows[index][1] and _has(rows[index], video_id):
+                song = self.song() or {}
                 if song.get("isPaused"):
                     self._request("POST", "/api/v1/play")
-                return f"Playing {_describe(song)}."
+                return f"Playing {_describe(song) if song else query}."
         return f"I added {query} to your queue, but it didn't start playing."
+
+    def wait_until_ready(self, seconds: float) -> bool:
+        """After starting Pear Desktop: True once its API answers with its queue (its window has loaded)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self._down_until = 0.0                    # don't let the unreachable back-off skip the check
+            try:
+                self._request("GET", "/api/v1/queue", timeout=3)
+                time.sleep(1.5)                       # the page answers a moment before it can search
+                return True
+            except (Unavailable, YTMError):
+                time.sleep(1.0)
+        return False
 
     # ---- plumbing --------------------------------------------------------------------
     def run(self, name: str, *args) -> str | None:
@@ -324,3 +598,14 @@ def _spoken_seconds(seconds: float) -> str:
         minutes = seconds // 60
         return f"{minutes} minute{'s' if minutes != 1 else ''}"
     return f"{seconds} second{'s' if seconds != 1 else ''}"
+
+
+def _new_index(before: list, after: list, video_id: str) -> int | None:
+    """Where the song just added sits in `after` (the queue was `before` it): the one occurrence of it whose
+    removal gives back the old queue."""
+    old = [vid for vid, _sel in before]
+    for i, row in enumerate(after):
+        if _has(row, video_id) and [v for v, _s in after[:i] + after[i + 1:]] == old:
+            return i
+    hits = [i for i, row in enumerate(after) if _has(row, video_id)]
+    return hits[-1] if len(hits) > sum(1 for row in before if _has(row, video_id)) else None

@@ -7,6 +7,7 @@ you ask for it). For what NEON does and how to use it, see [README.md](README.md
 | Feature | Needs | Section |
 | --- | --- | --- |
 | The program, voice commands, offline speech, the voice | Python and `requirements.txt` | [The program](#the-program) |
+| Running on Linux (Arch: Hyprland, KDE Plasma) | a few desktop tools | [On Linux](#on-linux-arch-hyprland-or-kde-plasma) |
 | Conversation, summaries, natural wording | Ollama and a model | [The local AI](#the-local-ai-ollama) |
 | Offline speech recognition on an NVIDIA GPU | CUDA libraries | [Speech recognition](#speech-recognition) |
 | More or different voices | nothing (downloaded in Settings) | [Voices](#voices) |
@@ -76,6 +77,76 @@ variable `NEON_DATA_DIR` to a folder before starting NEON.
 
 **Updating:** replace the code with the new version, run `pip install -r requirements.txt` again, and
 start NEON. Your settings are kept and converted automatically when a new version changes them.
+
+---
+
+## On Linux (Arch: Hyprland or KDE Plasma)
+
+NEON runs on Linux too, developed for Arch with **Hyprland** first and **KDE Plasma** second (both on
+Wayland). Other desktops mostly work, with fewer desktop features. Everything above applies, except the
+Windows-only steps; this section replaces them.
+
+1. **Desktop tools.** NEON uses the standard ones instead of Windows APIs:
+
+   ```sh
+   sudo pacman -S --needed python portaudio wl-clipboard playerctl libnotify espeak-ng plocate libsecret xdg-utils
+   # Hyprland:
+   sudo pacman -S --needed wtype grim slurp
+   # KDE Plasma:
+   sudo pacman -S --needed ydotool spectacle      # and kdotool from the AUR, for "close Firefox" and friends
+   ```
+
+2. **Python packages** go in a virtual environment (Arch doesn't allow `pip install` system-wide):
+
+   ```sh
+   cd ~/neon                                   # wherever you put the code
+   python -m venv .venv
+   .venv/bin/pip install -r requirements.txt
+   .venv/bin/needle fetch --generation 2
+   ```
+
+3. **Start NEON:** `.venv/bin/python main.py`. Settings and data are kept beside the code, or in
+   `~/.local/share/neon-assistant` if that folder isn't writable. *Settings → General → Startup* can add
+   NEON to the app menu, the desktop and autostart.
+
+**What's different on Linux**
+
+| | Hyprland | KDE Plasma |
+| --- | --- | --- |
+| Hotkeys | NEON adds them as Hyprland keybinds itself (and again after every config reload) | Through the desktop's shortcut portal: Plasma asks you to confirm them once, then they're in *System Settings → Keyboard → Shortcuts* |
+| Status bar | Floats on every workspace and reserves its strip, like Waybar | Best as the **NEON panel widget** (below). NEON's own bar also works, kept in place by a KWin window rule, but maximized windows go under it |
+| "Close Discord?" outline | The window's own border turns your accent colour | Not shown (the question is spoken as usual) |
+| Typing and dictation | `wtype` | `ydotool`: run `systemctl --user enable --now ydotool`; if nothing gets typed, your user needs access to `/dev/uinput` (see the ArchWiki's *ydotool* page) |
+| Window commands | built in (`hyprctl`) | `kdotool` |
+| Hiding the desktop's pop-ups | swaync, dunst or mako | Plasma's own |
+| Starting with the PC | needs uwsm (or dex), or add `exec-once = <path>/.venv/bin/python <path>/main.py --minimized` to `hyprland.conf` | built in |
+| Tray icon | needs a tray, like Waybar's `tray` module; without one, start NEON again (or `--command show`) to bring its window back | built in |
+
+- **The KDE panel widget.** *Settings → Status bar → Panel widget → Install the panel widget*, then right-click
+  your panel, *Add Widgets...*, and drag **NEON Assistant** onto it. It shows the orb and what NEON hears and
+  says; a click starts listening (or opens its pop-up: recent lines, Talk, Type, Mute, Wake word, Dictation,
+  Open, Settings), a middle-click mutes, and right-click has the rest. With it, you can turn NEON's own status
+  bar off. It talks to NEON on `127.0.0.1` only (port 47812, changeable on both sides); when NEON isn't
+  running, it says so and can start it.
+- **Hotkeys from your own config.** Any keybind or script can drive NEON with
+  `.venv/bin/python main.py --command talk` (or `quick`, `mute`, `wake`, `window`, `dictation`, `stop`,
+  `show`, `settings`, `board`, `quit`; `hold-start` / `hold-stop` for hold-to-talk on press and release).
+  On Hyprland: `bind = SUPER, N, exec, ~/neon/.venv/bin/python ~/neon/main.py --command talk`.
+- **NEON never edits your Hyprland or KWin config files** except for its own window rules in
+  `~/.config/kwinrulesrc` on KDE (listed in *System Settings → Window Management → Window Rules* as
+  "NEON Assistant: ..."). On Hyprland, everything it sets lasts until Hyprland restarts, and NEON sets it
+  again when it starts. Both Hyprland config styles work: `hyprland.conf` (0.53 syntax or older) and
+  `hyprland.lua`.
+- **Local AI:** `sudo pacman -S ollama-rocm` for AMD graphics (`ollama-cuda` for NVIDIA), then
+  `sudo systemctl enable --now ollama`. Some Radeon cards (the RX 6700 XT, for one) need
+  `HSA_OVERRIDE_GFX_VERSION=10.3.0`: add it with `sudo systemctl edit ollama` under `[Service]` as
+  `Environment="HSA_OVERRIDE_GFX_VERSION=10.3.0"`.
+- **File search** uses `plocate` instead of Everything: `sudo systemctl enable --now plocate-updatedb.timer`
+  keeps its index fresh (run `sudo updatedb` once to build it now).
+- **Passwords and tokens** are kept in KWallet or GNOME Keyring through `secret-tool`, instead of Windows'
+  Credential Manager. **Selected text** is read from the selection itself (no Ctrl+C trick needed).
+- **Not on Linux:** the Copilot key, NEON's own title bar (the desktop draws title bars; Hyprland draws none),
+  and reading the notifications that arrived while NEON was closed.
 
 ---
 

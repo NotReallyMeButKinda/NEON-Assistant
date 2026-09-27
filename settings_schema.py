@@ -49,7 +49,7 @@ CONSTRAINTS: dict[str, tuple] = {
     "bar_text_size": ("range", 10, 20), "notify_seconds": ("range", 2.0, 120.0),
     "bar_monitor": ("range", 0, 8), "wake_threshold": ("range", 0.1, 0.95), "whisper_threads": ("range", 0, 32), "calendar_alert_minutes": ("range", 1, 120), "quick_reply_seconds": ("range", 1.0, 60.0),
     "persona": ("choice", tuple(persona.ORDER)), "conversation_seconds": ("range", 2.0, 30.0),
-    "browser_port": ("range", 1024, 65535), "bitwarden_lock_minutes": ("range", 1.0, 240.0),
+    "browser_port": ("range", 1024, 65535), "panel_widget_port": ("range", 1024, 65535), "bitwarden_lock_minutes": ("range", 1.0, 240.0),
     "listen_sound_volume": ("range", 0.0, 1.0), "thinking_after": ("range", 0.5, 30.0),
 }
 

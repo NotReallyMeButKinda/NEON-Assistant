@@ -62,6 +62,12 @@ parser there, which is on purpose.
 | Summary -> board card | `assistant.summarize_notifications` asks, `LOCAL_CONFIRMED["notif_card"]` = `_add_notification_card` | `notify_offer_card` |
 | Smart home | `homeassistant.py` (`home_request` decides, `ask` calls /api/conversation/process), `assistant.handle_home`, Settings → Smart home; token in Credential Manager | `ha_enabled`, `ha_url`, `ha_confirm`, `ha_language` |
 | Listening sound, "still thinking" lines | `controller._play_listen_sound` / `_start_thinking_filler`, `listening.Listener.on_listen` | `listen_sound*`, `thinking_*` |
+| Linux port | `osinfo.py` (`IS_WINDOWS`, `desktop()`, `run()` through the fakeable `RUNNER`), `linuxdesk/` (one module per area; the Windows modules keep their code and, at the end, swap in these functions when not on Windows), `app_paths.command_args` | — |
+| Linux: Hyprland | `linuxdesk/hypr.py` (every action in three dialects: Lua config, 0.53+ hyprlang, older; `dialect()` finds out; `ReloadWatcher` re-applies after `configreloaded`) | — |
+| Linux: KDE Plasma | `linuxdesk/kwin.py` (window rules in kwinrulesrc), `linuxdesk/portal_keys.py` (GlobalShortcuts portal over jeepney), `wm.kde_shortcut` | — |
+| Linux: own windows placed | `ui/wayland_place.py` (`prepare` before first show, `settle` after moving; bar / shade / quick box / Wikipedia card) | — |
+| KDE panel widget | `plasmoid/org.neon.assistant/` (QML: `contents/ui/main.qml`), `panel_feed.py` (127.0.0.1 long-poll JSON + POST /command), `linuxdesk/plasmoid.py` (install with kpackagetool6); tested in plain Qt with stand-ins for Plasma's modules (`tests/plasma_harness.py`, `tests/plasma_stubs/`) | `panel_widget_enabled`, `panel_widget_port` |
+| `--command talk` | `linuxdesk/single.py` (QLocalServer; also the single-instance check on Linux), `main.send_command` | — |
 
 Settings live in `assistant.DEFAULT_CONFIG` (keys, defaults, comments) and
 `settings_schema.CONSTRAINTS` (ranges and choices). When a setting changes shape, bump
@@ -78,6 +84,9 @@ needs one of those turns it on and **stubs it**. Never, in a test:
   a real `hotkeys.KeyCapture` run: they act on whatever window you're using;
 - call the real `bw` (stub `bitwarden._run`) or write to Credential Manager (stub `browser_bridge.token`);
 - speak aloud or open a window on screen (tests run with `QT_QPA_PLATFORM=offscreen`).
+- run a Linux tool for real: `tests/test_linux_backends.py` swaps `osinfo.RUNNER` for a fake that records
+  commands; `tests/linux_smoke.py` does the same for the whole windows (in a subprocess, since pretending
+  to be Linux can't be undone).
 
 ## Known limits
 
@@ -88,3 +97,7 @@ needs one of those turns it on and **stubs it**. Never, in a test:
 - Weather answers are for now, even when "tomorrow" is asked (the forecast isn't wired to a day).
 - Qwen3 8B needs ~6 GB of VRAM. With a game running, Ollama may fall back to the CPU and answers get
   slower (the "still thinking" lines cover the wait). A smaller model can be picked in Settings → AI & chat.
+- Linux: tested against fakes on Windows (a Linux CI job is set up but has never run), not yet on a real
+  Hyprland or Plasma session.
+  On KDE the status bar doesn't reserve space, the window outline isn't shown, and hotkeys set in NEON
+  only count until Plasma has stored them (then they're changed in System Settings).

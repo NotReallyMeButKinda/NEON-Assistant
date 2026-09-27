@@ -5,6 +5,10 @@ One see-through, click-through, never-focused overlay per window, placed in phys
 visible frame (DWM's extended frame bounds: GetWindowRect includes the invisible resize borders). It
 follows the window if it moves, disappears if the window closes or is minimized, and takes itself away
 after the question times out. The glow breathes gently unless Windows' animation effects are off.
+
+On Linux an app can't put a window around another one (Wayland won't let it position itself), so on
+Hyprland the window's own border turns the accent colour instead (and back afterwards); elsewhere nothing
+is outlined and the spoken question does the job.
 """
 
 from __future__ import annotations
@@ -18,11 +22,13 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+import osinfo
+
 from .motion import animations_enabled
 from .status_bar import list_monitors
 from .theme import COLORS
 
-user32 = ctypes.windll.user32
+user32 = ctypes.windll.user32 if osinfo.IS_WINDOWS else None
 HWND_TOPMOST = -1
 SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0010, 0x0040
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
@@ -186,3 +192,41 @@ class WindowHighlight:
     def _repaint(self) -> None:
         for outline in self._outlines:
             outline.update()
+
+
+class BorderHighlight:
+    """Linux: the same interface, recolouring the windows' own borders on Hyprland (ids are addresses)."""
+
+    def __init__(self, controller=None):
+        self._marked: list[str] = []
+        self._expire = QTimer()
+        self._expire.setSingleShot(True)
+        self._expire.timeout.connect(self.clear)
+        if controller is not None:
+            controller.highlight_windows.connect(self.show_windows)
+            controller.highlight_clear.connect(self.clear)
+
+    @property
+    def active(self) -> bool:
+        return bool(self._marked)
+
+    def show_windows(self, ids: list, seconds: float = 45.0) -> None:
+        from linuxdesk import hypr
+        self.clear()
+        if not hypr.available():
+            return
+        colour = QColor(COLORS["accent"]).name()
+        self._marked = [str(i) for i in ids if hypr.set_border(str(i), colour)]
+        if self._marked:
+            self._expire.start(int(max(1.0, float(seconds)) * 1000))
+
+    def clear(self) -> None:
+        from linuxdesk import hypr
+        self._expire.stop()
+        for address in self._marked:
+            hypr.set_border(address, None)
+        self._marked = []
+
+
+if not osinfo.IS_WINDOWS:
+    WindowHighlight = BorderHighlight  # noqa: F811

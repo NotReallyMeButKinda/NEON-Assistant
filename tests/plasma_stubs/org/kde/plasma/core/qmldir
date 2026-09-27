@@ -1,0 +1,4 @@
+module org.kde.plasma.core
+Action 2.0 Action.qml
+ActionIcon 2.0 ActionIcon.qml
+Types 2.0 Types.qml

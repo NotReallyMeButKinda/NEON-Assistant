@@ -28,11 +28,13 @@ from ctypes import wintypes
 from pathlib import Path
 
 import neon_log
+import osinfo
 
 log = neon_log.get("system")
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_WIN = osinfo.IS_WINDOWS
+user32 = ctypes.WinDLL("user32", use_last_error=True) if _WIN else None
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if _WIN else None
 
 _VK_VOLUME_MUTE, _VK_VOLUME_DOWN, _VK_VOLUME_UP = 0xAD, 0xAE, 0xAF
 _CREATE_NO_WINDOW = 0x08000000
@@ -57,10 +59,11 @@ class _GUID(ctypes.Structure):
                 ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
 
 
-ole32 = ctypes.WinDLL("ole32", use_last_error=True)
-ole32.CLSIDFromString.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(_GUID)]
-ole32.CoCreateInstance.argtypes = [ctypes.POINTER(_GUID), ctypes.c_void_p, wintypes.DWORD,
-                                   ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)]
+ole32 = ctypes.WinDLL("ole32", use_last_error=True) if _WIN else None
+if ole32 is not None:
+    ole32.CLSIDFromString.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(_GUID)]
+    ole32.CoCreateInstance.argtypes = [ctypes.POINTER(_GUID), ctypes.c_void_p, wintypes.DWORD,
+                                       ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)]
 
 _CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C4579291692E}"
 _IID_IMMDeviceEnumerator = "{A95664D2-9614-4F35-A746-DE8DB63617E6}"
@@ -213,7 +216,7 @@ def set_mute(muted: bool | None = None) -> str:
 # Screenshots (GDI -> a PNG written by hand)
 # ---------------------------------------------------------------------------
 
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+gdi32 = ctypes.WinDLL("gdi32", use_last_error=True) if _WIN else None
 _SM_XVIRTUALSCREEN, _SM_YVIRTUALSCREEN, _SM_CXVIRTUALSCREEN, _SM_CYVIRTUALSCREEN = 76, 77, 78, 79
 _SRCCOPY, _CAPTUREBLT, _DIB_RGB_COLORS, _BI_RGB = 0x00CC0020, 0x40000000, 0, 0
 
@@ -467,8 +470,10 @@ def spoken_system_command(text: str) -> tuple[str, object] | None:
 CONFIRMATIONS = {
     "shutdown": "Shut the PC down?",
     "restart": "Restart the PC?",
-    "sign_out": "Sign out of Windows? Anything unsaved will be lost.",
-    "recycle_bin": "Empty the recycle bin? That can't be undone.",
+    "sign_out": ("Sign out of Windows? Anything unsaved will be lost." if _WIN
+                 else "Sign out? Anything unsaved will be lost."),
+    "recycle_bin": ("Empty the recycle bin? That can't be undone." if _WIN
+                    else "Empty the trash? That can't be undone."),
 }
 
 
@@ -511,3 +516,9 @@ def perform(action: str, argument=None) -> str:
             return "I couldn't take a screenshot."
         return f"Saved a screenshot to {path.parent.name} as {path.name}."
     return f"I don't know how to do '{action}'."
+
+
+if not _WIN:                                    # Linux: wpctl, systemctl, grim... (linuxdesk/system.py)
+    from linuxdesk.system import (cancel_shutdown, disk_free, empty_recycle_bin, get_volume,  # noqa: F401,F811
+                                  lock, nudge_volume, screenshot, set_brightness, set_mute, set_volume,
+                                  show_desktop, shutdown, sign_out, sleep, uptime)

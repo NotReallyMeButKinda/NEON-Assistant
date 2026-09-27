@@ -16,7 +16,7 @@ datas = [("notify_watcher.ps1", "."),            # the PowerShell helper that re
 binaries, hiddenimports = [], ["pyttsx3.drivers", "pyttsx3.drivers.sapi5", "comtypes", "win32com", "tzdata",
                               # imported inside functions: listed so a build can never miss them
                               "filesearch", "lookup_cache", "vad", "shortcuts", "homeassistant", "ui.beep_maker",
-                              "ui.window_highlight"]
+                              "ui.window_highlight", "osinfo", "linuxdesk.single"]
 
 # Packages that carry data files / native libraries PyInstaller can't see by import analysis alone.
 for package in ("piper", "needle", "onnxruntime", "faster_whisper", "ctranslate2", "tokenizers", "speech_recognition"):

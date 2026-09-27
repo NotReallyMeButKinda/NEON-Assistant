@@ -24,12 +24,14 @@ from PySide6.QtWidgets import (QAbstractButton, QGraphicsOpacityEffect, QHBoxLay
 import assistant as backend
 import calendar_feed
 import neon_log
+import osinfo
 import sysinfo
 
 import persona
 import timers
 import tts
 
+from . import wayland_place
 from .effects import EffectOverlay
 from .motion import animations_enabled
 from .theme import COLORS, FONT_FAMILY, STATE_COLORS, apply_theme, text_on
@@ -65,13 +67,17 @@ class _MONITORINFO(ctypes.Structure):
                 ("dwFlags", wintypes.DWORD)]
 
 
-_MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
+_MONITORENUMPROC = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
                                       wintypes.LPARAM)
 
 
 def list_monitors() -> list[tuple[int, int, int, int, float]]:
     """(left, top, right, bottom, scale) of every monitor in *physical* pixels, straight from Win32
-    (Qt's logical coordinates are unreliable with mixed DPI): the primary first, then left to right."""
+    (Qt's logical coordinates are unreliable with mixed DPI): the primary first, then left to right.
+    On Linux: Qt's screens in the compositor's layout (logical) pixels, with scale 1.0, since windows are
+    placed through Qt (and Hyprland) there, not with SetWindowPos."""
+    if not osinfo.IS_WINDOWS:
+        return [m[:5] for m in linux_screens()]
     found: list[tuple[bool, int, int, int, int, float]] = []
 
     def visit(hmon, _hdc, _rect, _lparam) -> bool:
@@ -92,6 +98,20 @@ def list_monitors() -> list[tuple[int, int, int, int, float]]:
     ctypes.windll.user32.EnumDisplayMonitors(None, None, _MONITORENUMPROC(visit), 0)
     found.sort(key=lambda m: (not m[0], m[1], m[2]))
     return [(l, t, r, b, sc) for _primary, l, t, r, b, sc in found]
+
+
+def linux_screens() -> list[tuple[int, int, int, int, float, str]]:
+    """(left, top, right, bottom, 1.0, output name) of every screen, the primary first, then left to right."""
+    primary = QGuiApplication.primaryScreen()
+    screens = sorted(QGuiApplication.screens(), key=lambda s: (s is not primary, s.geometry().x(), s.geometry().y()))
+    out = []
+    for screen in screens:
+        g = screen.geometry()
+        out.append((g.x(), g.y(), g.x() + g.width(), g.y() + g.height(), 1.0, screen.name()))
+    return out
+
+
+BAR_TITLE = "NEON status bar"          # Hyprland's window rules find the bar by this exact title
 
 
 def compute_rect(edge: int, monitor: tuple, height_px: int) -> tuple[int, int, int, int]:
@@ -556,6 +576,8 @@ class StatusBar(QWidget):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
                             | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setWindowTitle(BAR_TITLE)
+        self._reserved_on = ""                          # Linux (Hyprland): the output whose edge is reserved
         self.setMinimumHeight(0)
         self.setObjectName("statusbar")
         self._caption_sender = "You"
@@ -1195,6 +1217,45 @@ class StatusBar(QWidget):
         super().showEvent(event)
         if sys.platform == "win32" and not self._registered:
             QTimer.singleShot(0, self._register_appbar)
+        elif sys.platform != "win32":
+            QTimer.singleShot(0, self._place_linux)
+
+    def linux_rect(self) -> tuple[int, int, int, int]:
+        """(x, y, width, height) of the bar on Linux, in layout pixels."""
+        left, top, right, bottom = compute_rect(self._edge(), self._target_monitor(), bar_height())
+        return left, top, right - left, bottom - top
+
+    def prepare_linux(self) -> None:
+        """Before the bar first opens on Linux: the compositor's rules for it (see ui/wayland_place.py): floating
+        on every workspace, above everything, never focused, no border; on KDE also its exact place."""
+        if sys.platform == "win32":
+            return
+        wayland_place.prepare(self, BAR_TITLE, focus=False)
+        self.setGeometry(*self.linux_rect())
+        wayland_place.settle(self, fixed_size=True)
+
+    def relayout_linux(self) -> None:
+        """Hyprland reloaded its config (dropping the reserved strip): put the bar back and reserve it again."""
+        if sys.platform != "win32" and self.isVisible():
+            self._reserved_on = ""
+            self._place_linux()
+
+    def _place_linux(self) -> None:
+        """Put the bar along its edge and, on Hyprland, keep that strip free of tiled windows."""
+        x, y, width, height = self.linux_rect()
+        self.setGeometry(x, y, width, height)
+        wayland_place.settle(self, fixed_size=True)
+        from linuxdesk import hypr
+        if not hypr.available():
+            return
+        name = hypr.monitor_at(x + width // 2, y + height // 2)
+        if self._reserved_on and self._reserved_on != name:
+            hypr.reserve(self._reserved_on)
+        if name:
+            bottom = self._edge() == ABE_BOTTOM
+            hypr.reserve(name, top=0 if bottom else height, bottom=height if bottom else 0)
+            self._reserved_on = name
+        self._layout_key = self._bar_layout_key()
 
     def _target_monitor(self) -> tuple:
         """(left, top, right, bottom, scale) in physical pixels of the monitor the bar lives on
@@ -1289,8 +1350,14 @@ class StatusBar(QWidget):
             self.show()  # showEvent re-registers the appbar
         elif self._registered:
             self._position_appbar()
+        elif sys.platform != "win32":
+            self._place_linux()
 
     def unregister_appbar(self) -> None:
+        if self._reserved_on:                           # Linux (Hyprland): give the strip back
+            from linuxdesk import hypr
+            hypr.reserve(self._reserved_on)
+            self._reserved_on = ""
         if not self._registered:
             return
         self._registered = False

@@ -10,7 +10,9 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 
-_advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+import osinfo
+
+_advapi = ctypes.WinDLL("advapi32", use_last_error=True) if osinfo.IS_WINDOWS else None
 CRED_TYPE_GENERIC, CRED_PERSIST_LOCAL_MACHINE = 1, 2
 PREFIX = "NeonAssistant/"
 
@@ -23,13 +25,15 @@ class _CREDENTIAL(ctypes.Structure):
                 ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR)]
 
 
-_advapi.CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIAL), wintypes.DWORD]
-_advapi.CredWriteW.restype = wintypes.BOOL
-_advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))]
-_advapi.CredReadW.restype = wintypes.BOOL
-_advapi.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
-_advapi.CredDeleteW.restype = wintypes.BOOL
-_advapi.CredFree.argtypes = [ctypes.c_void_p]
+if _advapi is not None:
+    _advapi.CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIAL), wintypes.DWORD]
+    _advapi.CredWriteW.restype = wintypes.BOOL
+    _advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))]
+    _advapi.CredReadW.restype = wintypes.BOOL
+    _advapi.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    _advapi.CredDeleteW.restype = wintypes.BOOL
+    _advapi.CredFree.argtypes = [ctypes.c_void_p]
 
 
 def set_secret(name: str, value: str) -> bool:
@@ -57,3 +61,7 @@ def get_secret(name: str) -> str | None:
 
 def delete_secret(name: str) -> bool:
     return bool(_advapi.CredDeleteW(PREFIX + name, CRED_TYPE_GENERIC, 0))
+
+
+if not osinfo.IS_WINDOWS:                       # Linux: the desktop's keyring (Secret Service)
+    from linuxdesk.secrets import delete_secret, get_secret, set_secret  # noqa: F401,F811

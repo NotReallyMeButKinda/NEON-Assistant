@@ -17,33 +17,37 @@ import time
 from contextlib import contextmanager
 from ctypes import wintypes
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)      # private handles: our argtypes don't
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # leak into other ctypes users
+import osinfo
 
-user32.OpenClipboard.argtypes = [wintypes.HWND]
-user32.OpenClipboard.restype = wintypes.BOOL
-user32.CloseClipboard.restype = wintypes.BOOL
-user32.EmptyClipboard.restype = wintypes.BOOL
-user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
-user32.EnumClipboardFormats.restype = wintypes.UINT
-user32.GetClipboardData.argtypes = [wintypes.UINT]
-user32.GetClipboardData.restype = ctypes.c_void_p
-user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
-user32.SetClipboardData.restype = ctypes.c_void_p
-user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
-user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
-                                   ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-user32.CreateWindowExW.restype = wintypes.HWND
-user32.DestroyWindow.argtypes = [wintypes.HWND]
-kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-kernel32.GlobalAlloc.restype = ctypes.c_void_p
-kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
-kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalLock.restype = ctypes.c_void_p
-kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
-kernel32.GlobalSize.restype = ctypes.c_size_t
+user32 = kernel32 = None
+if osinfo.IS_WINDOWS:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)      # private handles: our argtypes don't
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # leak into other ctypes users
+
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
+    user32.EnumClipboardFormats.restype = wintypes.UINT
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+    user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                                       ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                       ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.DestroyWindow.argtypes = [wintypes.HWND]
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalSize.restype = ctypes.c_size_t
 
 CF_UNICODETEXT = 13
 _GMEM_MOVEABLE = 0x0002
@@ -228,3 +232,25 @@ def set_text(text: str) -> bool:
             return True
     except OSError:
         return False
+
+
+if not osinfo.IS_WINDOWS:
+    # Linux: the highlighted text *is* available directly (the primary selection), so nothing is pressed and
+    # the clipboard is never touched. wl-clipboard (xclip on X11) does the reading and writing.
+    from linuxdesk import clip as _clip
+
+    def copy_selection() -> str | None:  # noqa: F811
+        text = _clip.read(primary=True)
+        return text if text.strip() else None
+
+    def uia_selection() -> str:  # noqa: F811
+        return ""
+
+    def sequence_number() -> int:  # noqa: F811
+        return _clip.sequence_number()
+
+    def read_text() -> str:  # noqa: F811
+        return _clip.read()
+
+    def set_text(text: str) -> bool:  # noqa: F811
+        return _clip.write(text)

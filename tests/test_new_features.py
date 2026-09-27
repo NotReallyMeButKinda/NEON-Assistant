@@ -494,7 +494,7 @@ class SummarizeModeTests(unittest.TestCase):
             ctl.notification.connect(cards.append)
             ctl._ask_about_notifications = lambda batch: self.fail("asked instead of summarizing")
             ctl._on_new_notification(notifications.Notification(7, "Discord", "Alex", "are you coming?", aumid="x!y"))
-            self.assertTrue(pump_until(lambda: said, 5))
+            self.assertTrue(pump_until(lambda: said and cards, 5))      # the card arrives by a queued signal
         finally:
             backend.ollama_answer = saved
         self.assertEqual(said, ["Alex asks if you're coming."])

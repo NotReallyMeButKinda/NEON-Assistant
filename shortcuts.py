@@ -212,3 +212,57 @@ def apply(wanted: dict) -> list[str]:
             where = "Start menu" if kind == "start_menu" else "desktop"
             problems.append(f"Couldn't {'add' if enabled else 'remove'} the {where} shortcut: {exc}")
     return problems
+
+
+# ---------------------------------------------------------------------------
+# Linux: .desktop entries (the application menu, the desktop), and the Wayland app id
+# ---------------------------------------------------------------------------
+
+import osinfo  # noqa: E402
+
+
+def icon_path() -> str:
+    """The icon for NEON's .desktop entries: the glowing dot as a PNG."""
+    import app_paths
+    return str(app_paths.resource_path("icons") / "neon.png")
+
+
+if not osinfo.IS_WINDOWS:
+    from linuxdesk import apps as _apps
+
+    NAME = _apps.DESKTOP_ID                          # noqa: F811 -- "neon-assistant.desktop"
+    OLD_NAMES = ()                                   # noqa: F811
+
+    def _default_folder(kind: str) -> Path:  # noqa: F811
+        if kind == "desktop":
+            return _apps.user_dir("DESKTOP")
+        return Path(_apps.data_dirs()[0]) / "applications"
+
+    FOLDERS = {kind: (lambda k=kind: _default_folder(k)) for kind in KINDS}  # noqa: F811
+
+    def launch_target() -> tuple[str, str, str, str]:  # noqa: F811
+        import shlex
+
+        import app_paths
+        args = app_paths.launch_args()
+        return args[0], " ".join(shlex.quote(a) for a in args[1:]), str(app_paths.SOURCE_DIR), icon_path()
+
+    def _write(link: Path) -> None:  # noqa: F811
+        import shlex
+
+        import app_paths
+        exec_line = " ".join(shlex.quote(a) for a in app_paths.launch_args())
+        text = _apps.entry_text("Neon Assistant", exec_line, icon_path(), "Voice assistant",
+                                {"Keywords": "assistant;voice;neon;nova;", "X-KDE-StartupNotify": "false"})
+        _apps.write_entry(link, text, executable=link.parent == _default_folder("desktop"))
+        if link.parent == _default_folder("desktop") and osinfo.which("gio"):
+            osinfo.run(["gio", "set", str(link), "metadata::trusted", "true"], timeout=3)   # GNOME-style trust
+
+    def claim_app_id() -> None:  # noqa: F811
+        """Wayland names a window's app by its desktop file: NEON's windows belong to neon-assistant.desktop,
+        so docks, taskbars and Hyprland's window rules see "neon-assistant" with the right name and icon."""
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.setDesktopFileName("neon-assistant")
+
+    def rename_old() -> list[Path]:  # noqa: F811
+        return []

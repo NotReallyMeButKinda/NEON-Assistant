@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Id": "org.neon.assistant",
+        "Name": "NEON Assistant",
+        "Description": "What NEON hears and says, and its buttons, on your panel",
+        "Icon": "audio-input-microphone",
+        "Category": "Utilities",
+        "Authors": [
+            {
+                "Name": "NEON Assistant"
+            }
+        ],
+        "Version": "1.0",
+        "Website": ""
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

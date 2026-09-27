@@ -1,8 +1,9 @@
 # NEON Assistant
 
-A desktop voice assistant for Windows. Say "hey nova" (or press a hotkey, or type) and ask for something:
-open an app, set a timer, look up a fact, read your notifications, find a file, add a card to your board,
-pause the music. It answers out loud in a natural voice and shows the reply in a slim status bar.
+A desktop voice assistant for Windows, and for Linux (Arch, on Hyprland or KDE Plasma). Say "hey nova" (or
+press a hotkey, or type) and ask for something: open an app, set a timer, look up a fact, read your
+notifications, find a file, add a card to your board, pause the music. It answers out loud in a natural
+voice and shows the reply in a slim status bar.
 
 Speech recognition, the voice and the AI all run on your own PC by default: nothing you say leaves it
 unless you choose an online option.
@@ -85,7 +86,9 @@ your board, with the day and time it mentioned as the due date.
 
 **Music**
 `what's playing` · `pause the music` · `next song` · `skip ahead 30 seconds` · `like this song` ·
-`play Glass Beach on YouTube Music` (Pear Desktop; other players through the media keys)
+`play Glass Beach on YouTube Music` · `play the album Nurture by Porter Robinson` · `play my chill playlist`
+(Pear Desktop; other players through the media keys). An album or playlist plays in full, in order, right
+after the current song. If Pear Desktop is closed, NEON offers to open it and then plays what you asked for.
 
 **The browser** (Chrome, Edge, Brave, Firefox or Zen, with the [NEON extension](INSTALL.md#the-browser-extension))
 `summarize this page` · `what does this page say about shipping` · `read this article` ·
@@ -147,6 +150,10 @@ maximized windows sit below it. It shows what it heard and the reply, and option
 weather, CPU / memory / battery, a timer countdown, the next calendar event, what's playing with media
 buttons, and more. Right-click it to choose what's shown. It steps aside when a game or video goes
 fullscreen.
+
+**On KDE Plasma: a panel widget.** The orb and the captions can live in your Plasma panel instead, as the
+NEON Assistant widget: click to talk, middle-click to mute, and its pop-up has the recent lines and the
+buttons. Install it from *Settings → Status bar → Panel widget* (see [INSTALL.md](INSTALL.md)).
 
 **Notification cards.** New Windows notifications drop in over the status bar with Summarize and Open
 buttons and an ✕ to close them. Depending on your settings, NEON asks whether to summarize, summarizes
@@ -334,6 +341,8 @@ you ──speech──▶ listening.py (voice detection) ──▶ stt.py ──
 | `system_control.py` `windows.py` `dictation.py` `media.py` `ytmusic.py` | the PC, windows, typing, media |
 | `units.py` `mathcalc.py` `plugins.py` | conversions, arithmetic, plugins |
 | `ui/` | status bar, windows, settings, welcome tour, editors, effects |
+| `linuxdesk/` `osinfo.py` | Linux: Hyprland, KDE Plasma and the desktop tools |
+| `plasmoid/` `panel_feed.py` | the KDE Plasma panel widget, and the feed it follows |
 
 Running from source, your data (settings, memories, board, voices, logs) sits beside the code. The
 packaged `.exe` keeps it in `%APPDATA%\NeonAssistant`. Set `NEON_DATA_DIR` to put it anywhere else.
@@ -347,11 +356,16 @@ When something goes wrong, `neon.log` (*Settings → General → Open the log fi
 python -m unittest discover -s tests -t . -v
 ```
 
-About 520 tests, all offscreen and against a throwaway configuration: nothing touches your settings,
+About 590 tests, all offscreen and against a throwaway configuration: nothing touches your settings,
 speaks, types into your windows, or changes your volume. `NEON_LIVE=1` adds tests that use real
 windows (parked off-screen), real toasts and a running Everything. Screenshot tests compare each window
 with `tests/baselines/`; accept a deliberate change with `NEON_UPDATE_BASELINES=1`.
-`.github/workflows/tests.yml` runs the suite on Windows for every push.
+`.github/workflows/tests.yml` runs the suite on Windows for every push, and the Linux port's tests on
+Linux. On Windows those run too: `tests/linux_sim.py` imports every module with Windows hidden, and
+`tests/linux_smoke.py` drives the real windows and hotkeys against a fake Hyprland (each config
+dialect) and a fake KDE, checking the commands they'd send. The KDE panel widget's QML runs in plain Qt
+with stand-ins for Plasma (`tests/test_plasmoid.py`). The Linux code lives in `linuxdesk/`; the
+Windows modules hand over to it when `osinfo.IS_WINDOWS` is false.
 
 `HANDOFF.md` explains how a sentence is routed and how to add a command; `suggestions.md` lists ideas
 not done yet.

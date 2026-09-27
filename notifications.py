@@ -28,13 +28,16 @@ import subprocess
 import threading
 import time
 import uuid
-import winreg
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
 from pathlib import Path
 
 import app_paths
 import neon_log
+import osinfo
+
+if osinfo.IS_WINDOWS:
+    import winreg
 
 log = neon_log.get("notifications")
 
@@ -720,3 +723,33 @@ def decide(note: Notification, cfg: dict, paused: bool = False, now: datetime | 
 
 def strongest(decisions: list[Decision]) -> str:
     return max((d.action for d in decisions), key=lambda a: _RANK[a], default="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Linux: notifications come off the session D-Bus, and "hide the pop-ups" is the notification daemon's own
+# do-not-disturb (KDE Plasma, swaync, dunst, mako). See linuxdesk/notify.py.
+# ---------------------------------------------------------------------------
+
+if not osinfo.IS_WINDOWS:
+    from linuxdesk import notify as _notify
+    from linuxdesk.notify import NotificationWatcher  # noqa: F401,F811
+
+    def _read_toast_enabled():  # noqa: F811
+        return None                                   # "pop-ups on": what release() puts back
+
+    def _write_toast_enabled(value) -> None:  # noqa: F811
+        _notify.set_quiet(value == 0)
+
+    def send_test_toast(title: str, body: str = "") -> bool:  # noqa: F811
+        return _notify.send_test(title, body)
+
+    def enable_silence(watcher, state=None, timeout: float = 8.0) -> tuple[bool, str]:  # noqa: F811
+        state = state or SilenceState()
+        if not _notify.daemon() or _notify.daemon() == "kde":
+            return False, ("I can't switch this desktop's notification pop-ups off myself. Use its own "
+                           "do-not-disturb; I still read the notifications.")
+        state.engage()
+        return True, "Notification pop-ups are silenced while I'm running."
+
+    def launch_uri(notification_id, db=None) -> str:  # noqa: F811
+        return ""                                     # Linux notifications carry no click-to-open link here

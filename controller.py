@@ -26,6 +26,7 @@ import dictation
 import fun
 import memory_store
 import notifications
+import osinfo
 import persona
 import plugins
 import routines
@@ -942,14 +943,20 @@ class Assistant(QObject):
         link = notifications.safe_launch(str(n.get("launch") or ""))
         if link:
             try:
-                os.startfile(link)  # noqa: S606 -- the link the toast opens itself (blocked schemes excluded)
+                backend._startfile(link)            # the link the toast opens itself (blocked schemes excluded)
                 return
             except OSError as exc:
                 backend.log.info("couldn't open the notification's link (%s); opening the app", exc)
         if aumid:
             try:
-                os.startfile("shell:AppsFolder\\" + aumid)  # noqa: S606 -- the sender's own app id
-                return
+                if osinfo.IS_WINDOWS:
+                    os.startfile("shell:AppsFolder\\" + aumid)  # noqa: S606 -- the sender's own app id
+                    return
+                from linuxdesk import apps as linux_apps   # Linux: the notification's desktop-entry hint
+                entry = linux_apps.find_desktop_file(aumid if aumid.endswith(".desktop") else aumid + ".desktop")
+                if entry is not None and linux_apps.launch(str(entry)):
+                    return
+                raise OSError("no .desktop file for it")
             except OSError as exc:
                 backend.log.info("couldn't open %s by its app id (%s); trying by name", aumid, exc)
         if not app or app.lower() == "an app":

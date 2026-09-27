@@ -277,3 +277,72 @@ def window_command(action: str, target: str = "", found=None) -> str:
     user32.PostMessageW(hwnd, 0x0112, _SC[action], 0)
     return {"minimize": f"Minimizing {label}.", "maximize": f"Maximizing {label}.",
             "restore": f"Restoring {label}."}[action]
+
+
+# ---------------------------------------------------------------------------
+# Linux: the compositor does it (Hyprland: hyprctl; KDE: kdotool). Same tuples: (window id, pid, label).
+# ---------------------------------------------------------------------------
+
+import osinfo  # noqa: E402
+
+if not osinfo.IS_WINDOWS:
+    from linuxdesk import wm as _wm
+
+    def _foreground_window():  # noqa: F811
+        if not _wm.backend():
+            return _wm.UNSUPPORTED
+        window = _wm.active()
+        if window is None:
+            return "I can't tell which app is focused right now."
+        return window["id"], window["pid"], _wm._label(window["title"], window["app"]) or "the current window"
+
+    def _window_info(wid) -> tuple[int, str, str, str]:  # noqa: F811
+        window = next((w for w in _wm.windows() if w["id"] == wid), None)
+        if window is None:
+            return 0, "", "", ""
+        return window["pid"], window["app"], window["title"], _wm._label(window["title"], window["app"])
+
+    def close_focused_app() -> str:  # noqa: F811
+        target = _foreground_window()
+        if isinstance(target, str):
+            return target.replace("touch", "close")
+        wid, pid, label = target
+        if pid == os.getpid():
+            return "That's me. Say exit if you want to close me."
+        return f"Closing {label}." if _wm.close(wid) else f"I couldn't close {label}."
+
+    def find_windows(name: str) -> list[tuple]:  # noqa: F811
+        return _wm.find(name)
+
+    def close_windows(targets: list[tuple]) -> str:  # noqa: F811
+        existing = {w["id"] for w in _wm.windows()}
+        closed = [label for wid, pid, label in targets if pid != os.getpid() and wid in existing and _wm.close(wid)]
+        if not closed:
+            return "That window has already gone."
+        if len(closed) == 1:
+            return f"Closing {closed[0]}."
+        return f"Closing {len(closed)} {closed[0]} windows."
+
+    def window_command(action: str, target: str = "", found=None) -> str:  # noqa: F811
+        if not _wm.backend():
+            return _wm.UNSUPPORTED
+        if target == "all":
+            if action == "minimize":
+                return _wm.minimize_all()
+            if action == "restore":
+                return _wm.restore_all()
+            return "I can only minimize or restore all windows at once."
+        if target:
+            found = found or find_window(target)
+            if found is None:
+                return f"I couldn't find a window for {target}."
+        else:
+            found = _foreground_window()
+            if isinstance(found, str):
+                return found
+        wid, _pid, label = found
+        do = {"minimize": _wm.minimize, "maximize": _wm.maximize, "restore": _wm.restore}[action]
+        if not do(wid):
+            return f"I couldn't {action} {label}."
+        return {"minimize": f"Minimizing {label}.", "maximize": f"Maximizing {label}.",
+                "restore": f"Restoring {label}."}[action]

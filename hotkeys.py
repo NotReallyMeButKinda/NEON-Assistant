@@ -19,6 +19,8 @@ from ctypes import wintypes
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QTimer
 
+import osinfo
+
 WM_HOTKEY = 0x0312
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
 
@@ -78,7 +80,8 @@ class HotkeyManager(QAbstractNativeEventFilter):
         'unmapped' and is skipped. Returns a list of error messages (empty on full success)."""
         self.unregister()
         errors: list[str] = []
-        for label, spec, callback in binds:
+        for bind in binds:
+            label, spec, callback = bind[:3]            # a 4th item (the action's name) is for Linux
             spec = str(spec or "").strip()
             if not spec:
                 continue
@@ -115,9 +118,6 @@ class HotkeyManager(QAbstractNativeEventFilter):
 # Copilot key / Win+C
 # ---------------------------------------------------------------------------
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True)   # private handle: our argtypes stay ours
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
 WH_KEYBOARD_LL = 13
 _WM_KEYDOWN, _WM_SYSKEYDOWN = 0x0100, 0x0104
 VK_C, VK_F23 = 0x43, 0x86              # the Copilot key sends LWin + LShift + F23
@@ -126,22 +126,28 @@ _MASK_VK = 0xE8                        # an unassigned key, pressed to cancel th
 _MARK = 0x4E454F4E                     # "NEON" in dwExtraInfo: our own injected keys, ignored by the hook
 _KEYEVENTF_KEYUP = 0x0002
 
+if osinfo.IS_WINDOWS:
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)   # private handle: our argtypes stay ours
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-class _KBDLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD),
-                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class _KBDLLHOOKSTRUCT(ctypes.Structure):
+        _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
 
-_HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-_user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
-_user32.SetWindowsHookExW.restype = ctypes.c_void_p
-_user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
-_user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
-_user32.CallNextHookEx.restype = ctypes.c_ssize_t
-_user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
-_user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
-_kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
-_kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    _HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+    _user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+    _user32.SetWindowsHookExW.restype = ctypes.c_void_p
+    _user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+    _user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+    _user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    _user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    _user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
+    _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+else:
+    _user32 = _kernel32 = _HOOKPROC = None
 
 
 def _held(vk: int) -> bool:
@@ -286,14 +292,15 @@ class HoldKeyHook:
 # Typing into the quick box without taking focus (over a fullscreen game)
 # ---------------------------------------------------------------------------
 
-_user32.ToUnicodeEx.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_ubyte), wintypes.LPWSTR,
-                                ctypes.c_int, wintypes.UINT, ctypes.c_void_p]
-_user32.GetKeyboardLayout.argtypes = [wintypes.DWORD]
-_user32.GetKeyboardLayout.restype = ctypes.c_void_p
-_user32.GetForegroundWindow.restype = wintypes.HWND
-_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
-_user32.GetKeyState.argtypes = [ctypes.c_int]
-_user32.GetKeyState.restype = ctypes.c_short
+if osinfo.IS_WINDOWS:
+    _user32.ToUnicodeEx.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_ubyte), wintypes.LPWSTR,
+                                    ctypes.c_int, wintypes.UINT, ctypes.c_void_p]
+    _user32.GetKeyboardLayout.argtypes = [wintypes.DWORD]
+    _user32.GetKeyboardLayout.restype = ctypes.c_void_p
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    _user32.GetKeyState.argtypes = [ctypes.c_int]
+    _user32.GetKeyState.restype = ctypes.c_short
 
 _VK_CAPITAL, _VK_LSHIFT, _VK_RSHIFT, _VK_LCONTROL, _VK_RCONTROL, _VK_LMENU, _VK_RMENU = (
     0x14, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
@@ -390,3 +397,7 @@ class KeyCapture:
         text = "" if shortcut else key_text(vk, scan)
         QTimer.singleShot(0, lambda: self._on_key(vk, text, shortcut))     # hooks must return quickly
         return True
+
+
+if not osinfo.IS_WINDOWS:     # Linux: compositor keybinds that run NEON's command (linuxdesk/keys.py)
+    from linuxdesk.keys import CopilotKeyHook, HoldKeyHook, HotkeyManager, KeyCapture  # noqa: F401,F811

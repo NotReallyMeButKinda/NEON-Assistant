@@ -25,10 +25,11 @@ import time
 from ctypes import wintypes
 
 import neon_log
+import osinfo
 
 log = neon_log.get("dictation")
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
+user32 = ctypes.WinDLL("user32", use_last_error=True) if osinfo.IS_WINDOWS else None
 
 _INPUT_KEYBOARD = 1
 _KEYEVENTF_KEYUP = 0x0002
@@ -57,8 +58,9 @@ class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
 
 
-user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
-user32.SendInput.restype = wintypes.UINT
+if user32 is not None:
+    user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
+    user32.SendInput.restype = wintypes.UINT
 
 BATCH = 60          # keystrokes per SendInput call: big enough to be fast, small enough to be safe
 
@@ -120,8 +122,9 @@ def press_backspace(times: int = 1) -> None:
 # ---------------------------------------------------------------------------
 
 _KEYEVENTF_EXTENDEDKEY = 0x0001
-user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
-user32.MapVirtualKeyW.restype = wintypes.UINT
+if user32 is not None:
+    user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+    user32.MapVirtualKeyW.restype = wintypes.UINT
 
 MODIFIER_KEYS = {"ctrl": 0x11, "control": 0x11, "alt": 0x12, "shift": 0x10,
                  "win": 0x5B, "windows": 0x5B, "meta": 0x5B, "super": 0x5B}
@@ -332,3 +335,25 @@ class Session:
             return "There's nothing to take back."
         press_backspace(count)
         return "Taken back."
+
+
+if not osinfo.IS_WINDOWS:                       # Linux: wtype / ydotool / xdotool (linuxdesk/input.py)
+    from linuxdesk import input as _input
+
+    def type_text(text: str) -> bool:  # noqa: F811
+        ok = _input.type_text(text)
+        if not ok and text:
+            log.warning("typing failed: %s", _input.MISSING if not _input.tool() else "the helper refused")
+        return ok
+
+    def press_backspace(times: int = 1) -> None:  # noqa: F811
+        try:
+            _input.press_backspace(times)
+        except ValueError as exc:
+            log.warning("backspace failed: %s", exc)
+
+    def parse_keys(spec: str):  # noqa: F811
+        return _input.parse(spec)
+
+    def press_keys(spec: str) -> bool:  # noqa: F811
+        return _input.press_keys(spec)
