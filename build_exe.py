@@ -4,7 +4,7 @@ build_exe.py -- package the assistant as a Windows program (a folder with NeonAs
     pip install pyinstaller
     python build_exe.py [--out DIR]
 
-The result is dist/NeonAssistant/ (or DIR/dist). Run NeonAssistant.exe from there; README.md,
+The result is dist/NeonAssistant/ (or DIR/dist). Run NeonAssistant.exe from there; README.md, GUIDE.md,
 INSTALL.md and the browser extension (neon-bridge.xpi for Firefox / Zen, the neon-bridge-chrome folder and
 .zip for Chrome / Edge / Brave) are copied next to it. The exe keeps
 its settings, downloaded voices, log and caches in %APPDATA%\\NeonAssistant, separate from the program
@@ -45,7 +45,7 @@ def main() -> int:
     code = subprocess.call(command, cwd=HERE)
     if code == 0:
         target = out / "dist" / "NeonAssistant"
-        for doc in ("README.md", "INSTALL.md"):
+        for doc in ("README.md", "GUIDE.md", "INSTALL.md"):
             shutil.copy2(HERE / doc, target / doc)
         shutil.copy2(xpi, target / xpi.name)
         shutil.copy2(chrome_zip, target / chrome_zip.name)

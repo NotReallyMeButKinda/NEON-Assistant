@@ -1,7 +1,7 @@
 # Handoff: carrying NEON on
 
 Everything you need to keep working on this without the person or tool that wrote it. For what NEON
-does and how to use it, see `README.md`; for installing it and each optional feature, `INSTALL.md`. For ideas not done yet, see `suggestions.md`.
+does and how to use it, see `GUIDE.md`; for installing it and each optional feature, `INSTALL.md`. For ideas not done yet, see `suggestions.md`.
 
 ## Run, test, build
 
